@@ -19,4 +19,4 @@ pysam
 time
 ```
 
-The only third-parth software that the user should have is ```BLASTn```, which is available at https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download.
+The only third-party software that the user should have is ```BLASTn```, which is available at https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download.
