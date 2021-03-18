@@ -8,7 +8,7 @@ Virus genomes assembled from short-reads sequenced metagenomes are usually fragm
 
 Figure 1. The EOL have been documented in manual genome curation, see [Chen et al. 2020. Genome Research](https://genome.cshlp.org/content/30/3/315.short) for details.
 
-## Installation options
+## Installation
 COBRA is a python script (version 3.7 or higher) that uses a list of frequently used python packages including:
 ```
 Bio
@@ -63,4 +63,32 @@ If assembled with metaSPAdes, the coverage information in the contig headers cou
 COBRA.py -f all.contigs.fasta -q queries.fasta -m mapping.sam -a metaspades -k 127
 ```
 
+## Output files
+Below is a general list of output files in the ```queries.fasta.COBRA``` folder:
+
+```
+COBRA_extended_10k_fewer
+COBRA_extended_10k_fewer.fasta
+COBRA_extended_10k_fewer.fasta.summary.txt
+COBRA_extended_10k_fewer_joining_details.txt
+COBRA_extended_10k_or_more_unique
+COBRA_extended_10k_or_more_unique.fasta
+COBRA_extended_10k_or_more_unique.fasta.summary.txt
+COBRA_extended_10k_or_more_unique_joining_details.txt
+COBRA_extended_circular_dominant_unique
+COBRA_extended_circular_dominant_unique.fasta
+COBRA_extended_circular_dominant_unique.fasta.summary.txt
+COBRA_extended_circular_dominant_unique_joining_details.txt
+COBRA_extended_circular_rare_unique
+COBRA_extended_circular_rare_unique.fasta
+COBRA_extended_circular_rare_unique.fasta.summary.txt
+COBRA_extended_failed.fasta
+COBRA_extended_failed.fasta.summary.txt
+COBRA_joining_status.txt
+COBRA_joining_summary.txt
+COBRA_self_circular_queries_trimmed.fasta
+COBRA_self_circular_queries_trimmed.fasta.summary.txt
+intermediate.files
+log
+```
 
