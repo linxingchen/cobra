@@ -127,7 +127,7 @@ Figure 2. The equal pathes originating from within-population diversity (or loca
 Figure 3. Information of COBRA "extended_circular" genomes (dominant and rare).
 
 ### log file
-The ```log``` file includes the content of each processing steps, example shown below:
+The ```log``` file includes the content of each processing step, example shown below:
 
 ```
 [Thu Mar 18 10:35:03 2021] [1/20] Reading contigs and getting contig ends ... A total of 311739 contigs were imported.
@@ -155,7 +155,6 @@ The ```log``` file includes the content of each processing steps, example shown 
 The ```log``` file also gives a summary of the joining status of all queries, example shown below:
 
 ```
-======================================================================================================================================================
 Final summary
 Total queries: 616
 Self circular sequences: 27
@@ -165,7 +164,6 @@ Extended < 10k: 155
 Failed due to COBRA rules: 93
 Failed due to DNA break or low abundance: 120
 Failed due to Unexpected_assembly_break_or_short_piece_missing: 0
-======================================================================================================================================================
 ```
 
 ## Citation
