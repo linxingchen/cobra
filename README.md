@@ -36,7 +36,7 @@ contig-140_3    15.4817
 contig-140_4    41.2746
 ...
 ```
-- Note that metaSPAdes contigs have coverage information (not absolute coverage though) in their headers, which will be used by COBRA if no ```coverage.txt``` file is provided.
+Note that metaSPAdes contigs have coverage information (not absolute coverage though) in their headers, which will be used by COBRA if no ```coverage.txt``` file is provided.
 
 * ```queries.fasta``` - the fasta file containing all the query contigs for joining path search.
 
@@ -44,9 +44,9 @@ contig-140_4    41.2746
 
 Two additional flags should be provided for COBRA to determine the EOL, i.e.,
 
-```assembler``` - currently only 'idba' (for IDBA_UD), 'metaspades' (for metaSPAdes), and 'megahit' (for MEGAHIT).
+* ```assembler``` - currently only 'idba' (for IDBA_UD), 'metaspades' (for metaSPAdes), and 'megahit' (for MEGAHIT).
 
-```kmer``` - the largest kmer used in de novo assembly.
+* ```kmer``` - the largest kmer used in de novo assembly.
 
 
 ## How to run
