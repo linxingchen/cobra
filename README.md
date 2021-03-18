@@ -105,8 +105,15 @@ For all the quries, COBRA assigns them to different categories based on their jo
 For the joined and extended queries in each category, only the unique ones (```*.fasta```) will be saved for users' following analyses, and the sequence information (e.g., length, coverage, GC, num of Ns) is summarized in the ```*fasta.summary.txt``` files. For categories of "extended_circular", "extended >= 10k" and "extended < 10k", the joining details of each query are included in the corresponding folder and ```*joining_details.txt``` file, and summarized in the ```COBRA_joining_summary.txt``` file, example shown below:
 
 ```
-
+QuerySeqID      QuerySeqLen     TotRetSeqs      TotRetLen       AssembledLen    ExtendedLen     Status
+contig-140_100  47501   3       50379   49962   2461    Extended_circular
+contig-140_112  45060   3       62549   62132   17072   Extended_circular
+contig-140_114  44829   2       45342   45064   235     Extended_circular
+contig-140_160  40329   2       41018   40740   411     Extended_circular
+contig-140_188  38386   5       48986   48291   9905    Extended_circular
+...
 ```
+
 
 For those queries resulting in the "extended_circular" category, if "equal_path" exists (Figure 2), COBRA will output both the ```dominant genome``` with the dominant path and the ```rare genome``` with the rare path (Figure 3).
 
@@ -123,7 +130,13 @@ Figure 3. Information of COBRA "extended_circular" genomes (dominant and rare).
 All the queries in the categories of 
 
 ### log file
-The ```log``` file gives a summary of the joining status of all queries, example shown below:
+The ```log``` file includes the content of each processing steps, example shown below:
+
+```
+
+```
+
+The ```log``` file also gives a summary of the joining status of all queries, example shown below:
 
 ```
 ======================================================================================================================================================
