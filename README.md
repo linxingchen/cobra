@@ -2,7 +2,7 @@
 COBRA (Contig Overlap Based Re-Assembly) is a bioinformatic tool to get higher quality virus genomes assembled from short-reads metagenomes.
 
 ## Introduction
-Virus genomes assembled from short-reads sequenced metagenomes are usually fragmented due to intra-genome repeats and within-population variations (or subpopulation diversity, or local diversity), as the widely used assemblers based on de Bruijn graphs, e.g., metaSPAdes, IDBA_UD and MEGAHIT, tend to have a breaking point when multiple paths are available instead of making risky extension. According to the principles of the abovementioned assemblers, the broken contigs have an end overlap with determined length, that is the ```max-kmer``` used in de nono assembly for metaSPAdes and MEGAHIT, and the ```max-kmer - 1``` for IDBA_UD, which we termed as ```expected overlap length (EOL)```. COBRA determines the EOL (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired end reads mapping).
+Virus genomes assembled from short-reads sequenced metagenomes are usually fragmented due to intra-genome repeats and within-population variations (or subpopulation diversity, or local diversity), as the widely used assemblers based on de Bruijn graphs, e.g., metaSPAdes, IDBA_UD and MEGAHIT, tend to have a breaking point when multiple paths are available instead of making risky extension. According to the principles of the abovementioned assemblers, the broken contigs have an end overlap with determined length, that is the *max-kmer* used in de nono assembly for metaSPAdes and MEGAHIT, and the *max-kmer* - 1 for IDBA_UD, which we termed as ```expected overlap length (EOL)```. COBRA determines the EOL (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired end reads mapping).
 
 <img src="https://user-images.githubusercontent.com/46725273/111421478-49768b00-86aa-11eb-8bea-9d4aa060a5e0.png" width="519" height="186">
 
@@ -100,6 +100,7 @@ For all the quries, COBRA assigns them to different categories based on their jo
 * "extended < 10k" - the query contig was joined and extended fewer than 10 kbp.
 * "extended_failed" - tthe query contig was not able to be extended due to different reasons (i.e., "COBRA rules", "DNA break or low abundance" and "Unexpected_assembly_break_or_short_piece_missing"). 
 
+For the joined and extended queries in each category, only the unique ones (```*.fasta```) will be saved for users' following analyses, and the sequence information (e.g., length, coverage, GC, num of Ns) is summarized in the ```*fasta.summary.txt``` files. 
 
 ## Citation
-The manuscript is in preparation (Chen et al., in preparation).
+The manuscript is in preparation (Chen et al., in prep).
