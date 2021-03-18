@@ -6,7 +6,7 @@ Virus genomes assembled from short-reads sequenced metagenomes are usually fragm
 
 *Note: as COBRA will use information provided by paired-end reads, thus only those samples sequenced by paired-end technology should work.*
 
-<img src="https://user-images.githubusercontent.com/46725273/111421478-49768b00-86aa-11eb-8bea-9d4aa060a5e0.png" width="519" height="186">
+<img src="https://user-images.githubusercontent.com/46725273/111421478-49768b00-86aa-11eb-8bea-9d4aa060a5e0.png">
 
 **Figure 1. The EOL have been documented in manual genome curation, see [Chen et al. 2020. Genome Research](https://genome.cshlp.org/content/30/3/315.short) for details.**
 
