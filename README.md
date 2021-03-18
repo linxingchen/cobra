@@ -25,9 +25,9 @@ Once these packages are available, the only third-party software that the user s
 ## Input files
 COBRA needs four files as inputs, i.e., 
 
-input 1. ```all.contigs.fasta``` - the whole contig set from the assembly.
+* ```all.contigs.fasta``` - the whole contig set from the assembly.
 
-input 2. ```coverage.txt``` - a two columns (tab) file of the coverage of all contigs, example below:
+* ```coverage.txt``` - a two columns (tab) file of the coverage of all contigs, example below:
 
 ```contig-140_0    25.552
 contig-140_1    42.1388
@@ -36,11 +36,11 @@ contig-140_3    15.4817
 contig-140_4    41.2746
 ...
 ```
-* Note that metaSPAdes contigs have coverage information (not absolute coverage though) in their headers, which will be used by COBRA if no ```coverage.txt``` file is provided.
+- Note that metaSPAdes contigs have coverage information (not absolute coverage though) in their headers, which will be used by COBRA if no ```coverage.txt``` file is provided.
 
-input 3. ```queries.fasta``` - the fasta file containing all the query contigs for joining path search.
+* ```queries.fasta``` - the fasta file containing all the query contigs for joining path search.
 
-input 4. ```mapping.sam (or mapping.bam)``` - the paired-end reads mapping file of all contigs.
+* ```mapping.sam (or mapping.bam)``` - the paired-end reads mapping file of all contigs.
 
 Two additional flags should be provided for COBRA to determine the EOL, i.e.,
 
@@ -53,10 +53,14 @@ Two additional flags should be provided for COBRA to determine the EOL, i.e.,
 
 The output file will be ```queries.fasta.COBRA``` if not specified via the ```-o``` flag.
 
-```COBRA.py -f all.contigs.fasta -c coverage.txt -q queries.fasta -m mapping.sam -a idba -k 100```
+```
+COBRA.py -f all.contigs.fasta -c coverage.txt -q queries.fasta -m mapping.sam -a idba -k 100
+```
 
 If assembled with metaSPAdes, the coverage information in the contig headers could be used when no additional coverage file is provided.
 
-```COBRA.py -f all.contigs.fasta -q queries.fasta -m mapping.sam -a metaspades -k 127```
+```
+COBRA.py -f all.contigs.fasta -q queries.fasta -m mapping.sam -a metaspades -k 127
+```
 
 
