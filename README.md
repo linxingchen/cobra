@@ -25,7 +25,7 @@ Once these packages are available, the only third-party software that the user s
 ## Input files
 COBRA needs four files as inputs, i.e., 
 
-* ```all.contigs.fasta``` - the whole contig set from the assembly.
+* ```all.contigs.fasta``` - the whole contig set from the assembly, note that IDBA_UD and MEGAHIT usually save contigs with a minimun length of 200 bp.
 
 * ```coverage.txt``` - a two columns (tab) file of the coverage of all contigs, example below:
 
@@ -98,4 +98,8 @@ For all the quries, COBRA assigns them to different categories based on their jo
 * "extended_circular" - the query contig was joined and exteneded into a circular genome.
 * "extended >= 10k" - the query contig was joined and extended at least 10 kbp.
 * "extended < 10k" - the query contig was joined and extended fewer than 10 kbp.
-* "extended_failed" - tthe query contig was not able to be extended due to differeentt reasons. 
+* "extended_failed" - tthe query contig was not able to be extended due to different reasons (i.e., "COBRA rules", "DNA break or low abundance" and "Unexpected_assembly_break_or_short_piece_missing"). 
+
+
+## Citation
+The manuscript is in preparation (Chen et al., in preparation).
