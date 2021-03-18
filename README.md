@@ -12,7 +12,7 @@ COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher 
 
 *Note: as COBRA will use information provided by paired-end reads, thus only those samples sequenced by paired-end technology should work.*
 
-![image](https://user-images.githubusercontent.com/46725273/111677181-349a1480-87dc-11eb-93a0-25706d5aa6ed.png)
+![image](https://user-images.githubusercontent.com/46725273/111677281-4c719880-87dc-11eb-85a9-a62906f4e10b.png)
 
 **Figure 2. The EOL have been documented in manual genome curation, see [Chen et al. 2020. Genome Research](https://genome.cshlp.org/content/30/3/315.short) for details.**
 
