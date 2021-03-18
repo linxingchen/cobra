@@ -50,10 +50,13 @@ Two additional flags should be provided for COBRA to determine the EOL, i.e.,
 
 
 ## How to run
-```COBRA.py -f all.contigs.fasta -c coverage.txt -q queries.fasta -m mapping.sam -a idba -k 100```
 
 The output file will be ```queries.fasta.COBRA``` if not specified via the ```-o``` flag.
 
-```COBRA.py -f all.contigs.fasta -q queries.fasta -m mapping.sam -a metaspades -k 127```
+```COBRA.py -f all.contigs.fasta -c coverage.txt -q queries.fasta -m mapping.sam -a idba -k 100```
 
 If assembled with metaSPAdes, the coverage information in the contig headers could be used when no additional coverage file is provided.
+
+```COBRA.py -f all.contigs.fasta -q queries.fasta -m mapping.sam -a metaspades -k 127```
+
+
