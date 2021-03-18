@@ -41,5 +41,12 @@ input 3. ```query.fasta``` - the fasta file containing all the query contigs for
 
 input 4. ```mapping.sam (or mapping.bam)``` - the paired-end reads mapping file of all contigs.
 
+Two additional flags should be provided for COBRA to determine the EOL, i.e.,
+
+```assembler``` - currently only 'idba' (for IDBA_UD), 'metaspades' (for metaSPAdes), and 'megahit' (for MEGAHIT).
+
+```kmer``` - the largest kmer used in de novo assembly.
+
+
 
 
