@@ -2,23 +2,23 @@
 COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher quality virus genomes assembled from short-read metagenomes.
 
 ## Introduction
-Virus genomes assembled from short-reads sequenced metagenomes are usually fragmented due to intra-genome repeats and within-population variations (or subpopulation diversity, or local diversity), as the widely used assemblers based on de Bruijn graphs, e.g., metaSPAdes, IDBA_UD and MEGAHIT, tend to have a breaking point when multiple paths are available instead of making risky extension (see example in **Figure 1**). 
+*Virus genomes assembled from short-reads sequenced metagenomes are usually fragmented due to intra-genome repeats and within-population variations (or subpopulation diversity, or local diversity), as the widely used assemblers based on de Bruijn graphs, e.g., metaSPAdes, IDBA_UD and MEGAHIT, tend to have a breaking point when multiple paths are available instead of making risky extension (see example in **Figure 1**). 
 
 ![image](https://user-images.githubusercontent.com/46725273/111676563-8a21f180-87db-11eb-9b8c-4c63fb993936.png)
 
 **Figure 1. Example of how assemblers break in assembly when within-population occurs.**
 
-According to the principles of the abovementioned assemblers, the broken contigs have an end overlap with determined length, that is the *max-kmer* used in de nono assembly for metaSPAdes and MEGAHIT, and the *max-kmer* - 1 for IDBA_UD, which we termed as ```expected overlap length (EOL)``` (**Figures 1 and 2**). 
+*According to the principles of the abovementioned assemblers, the broken contigs have an end overlap with determined length, that is the *max-kmer* used in de nono assembly for metaSPAdes and MEGAHIT, and the *max-kmer* - 1 for IDBA_UD, which we termed as ```expected overlap length (EOL)``` (**Figures 1 and 2**). 
 
 *Note: as COBRA will use information provided by paired-end reads, thus only those samples sequenced by paired-end technology should work.*
 
-<img src="https://user-images.githubusercontent.com/46725273/111421478-49768b00-86aa-11eb-8bea-9d4aa060a5e0.png">
+![image](https://user-images.githubusercontent.com/46725273/111677181-349a1480-87dc-11eb-93a0-25706d5aa6ed.png)
 
 **Figure 2. The EOL have been documented in manual genome curation, see [Chen et al. 2020. Genome Research](https://genome.cshlp.org/content/30/3/315.short) for details.**
 
 ##
 ## How COBRA works
-COBRA determines the EOL (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired end reads mapping) (**Figrue 3**).
+*COBRA determines the EOL (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired end reads mapping) (**Figrue 3**).
 
 ![image](https://user-images.githubusercontent.com/46725273/111675243-25b26280-87da-11eb-9f28-60c8625e48c7.png)
 
