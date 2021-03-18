@@ -116,5 +116,21 @@ Figure 2. The equal pathes originating from within-population diversity (or loca
 Figure 3. Information of COBRA "extended_circular" genomes (dominant and rare).
 
 
+The ```log``` file gives a summary of the joining status of all queries, example shown below:
+
+```
+======================================================================================================================================================
+Final summary
+Total queries: 616
+Self circular sequences: 27
+Extended_circular: 70 (Unique: 48)
+Extended >= 10k: 151 (Unique: 108)
+Extended < 10k: 155
+Failed due to COBRA rules: 93
+Failed due to DNA break or low abundance: 120
+Failed due to Unexpected_assembly_break_or_short_piece_missing: 0
+======================================================================================================================================================
+```
+
 ## Citation
 The manuscript is in preparation (Chen et al., in prep).
