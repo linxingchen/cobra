@@ -92,7 +92,7 @@ intermediate.files
 log
 ```
 
-For all the quries, COBRA assigns them to different categories based on their joining status, i.e.,
+For all the quries, COBRA assigns them to different categories based on their joining status (detailed in the ```COBRA_joining_status.txt``` file), i.e.,
 
 * "self_circular" - the query contig itself is a circular genome.
 * "extended_circular" - the query contig was joined and exteneded into a circular genome.
