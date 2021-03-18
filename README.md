@@ -133,7 +133,7 @@ For those queries resulting in the "extended_circular" category, if "equal_path"
 
 **Figure 4. Information of COBRA "extended_circular" genomes (dominant and rare).**
 
-**log file:** The ```log``` file includes the content of each processing step, example shown below:
+* **log file:** The ```log``` file includes the content of each processing step, example shown below:
 
 ```
 [Thu Mar 18 10:35:03 2021] [1/20] Reading contigs and getting contig ends ... A total of 311739 contigs were imported.
