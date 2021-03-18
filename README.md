@@ -2,13 +2,20 @@
 COBRA (Contig Overlap Based Re-Assembly) is a bioinformatic tool to get higher quality virus genomes assembled from short-reads metagenomes.
 
 ## Introduction
-Virus genomes assembled from short-reads sequenced metagenomes are usually fragmented due to intra-genome repeats and within-population variations (or subpopulation diversity, or local diversity), as the widely used assemblers based on de Bruijn graphs, e.g., metaSPAdes, IDBA_UD and MEGAHIT, tend to have a breaking point when multiple paths are available instead of making risky extension. According to the principles of the abovementioned assemblers, the broken contigs have an end overlap with determined length, that is the *max-kmer* used in de nono assembly for metaSPAdes and MEGAHIT, and the *max-kmer* - 1 for IDBA_UD, which we termed as ```expected overlap length (EOL)```. COBRA determines the EOL (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired end reads mapping).
+Virus genomes assembled from short-reads sequenced metagenomes are usually fragmented due to intra-genome repeats and within-population variations (or subpopulation diversity, or local diversity), as the widely used assemblers based on de Bruijn graphs, e.g., metaSPAdes, IDBA_UD and MEGAHIT, tend to have a breaking point when multiple paths are available instead of making risky extension. According to the principles of the abovementioned assemblers, the broken contigs have an end overlap with determined length, that is the *max-kmer* used in de nono assembly for metaSPAdes and MEGAHIT, and the *max-kmer* - 1 for IDBA_UD, which we termed as ```expected overlap length (EOL)``` (**Figure 1**). COBRA determines the EOL (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired end reads mapping) (**Figrue 2**).
 
 *Note: as COBRA will use information provided by paired-end reads, thus only those samples sequenced by paired-end technology should work.*
 
 <img src="https://user-images.githubusercontent.com/46725273/111421478-49768b00-86aa-11eb-8bea-9d4aa060a5e0.png" width="519" height="186">
 
-Figure 1. The EOL have been documented in manual genome curation, see [Chen et al. 2020. Genome Research](https://genome.cshlp.org/content/30/3/315.short) for details.
+**Figure 1. The EOL have been documented in manual genome curation, see [Chen et al. 2020. Genome Research](https://genome.cshlp.org/content/30/3/315.short) for details.**
+
+## How COBRA works
+
+![image](https://user-images.githubusercontent.com/46725273/111675243-25b26280-87da-11eb-9f28-60c8625e48c7.png)
+
+**Figure 2. The workfolw of COBRA.**
+
 
 ## Installation
 COBRA is a python script (tested for version 3.7 or higher) that uses a list of frequently used python packages including:
@@ -115,16 +122,16 @@ contig-140_188  38386   5       48986   48291   9905    Extended_circular
 ```
 
 
-For those queries resulting in the "extended_circular" category, if "equal_path" exists (Figure 2), COBRA will output both the ```dominant genome``` with the dominant path and the ```rare genome``` with the rare path (Figure 3).
+For those queries resulting in the "extended_circular" category, if "equal_path" exists (**Figure 3**), COBRA will output both the ```dominant genome``` with the dominant path and the ```rare genome``` with the rare path (**Figure 4**).
 
 ![image](https://user-images.githubusercontent.com/46725273/111669292-e41eb900-87d3-11eb-8f23-b23b0b5cdb3c.png)
 
-Figure 2. The equal pathes originating from within-population diversity (or local diversity).
+**Figure 3. The equal pathes originating from within-population diversity (or local diversity).**
 
 
 ![image](https://user-images.githubusercontent.com/46725273/111668676-390dff80-87d3-11eb-87e5-b16251f06b73.png)
 
-Figure 3. Information of COBRA "extended_circular" genomes (dominant and rare).
+**Figure 4. Information of COBRA "extended_circular" genomes (dominant and rare).**
 
 **log file:** The ```log``` file includes the content of each processing step, example shown below:
 
