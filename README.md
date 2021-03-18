@@ -21,3 +21,25 @@ time
 ```
 
 The only third-party software that the user should have is [BLASTn](https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download).
+
+## Input files
+COBRA needs four files as inputs, i.e., 
+
+```all.contigs.fasta``` - the whole contig set from the assembly.
+
+```coverage.txt``` - a two columns (tab) file of the coverage of all contigs, example below:
+
+```contig-140_0    25.552
+contig-140_1    42.1388
+contig-140_2    14.6023
+contig-140_3    15.4817
+contig-140_4    41.2746
+...
+```
+
+```query.fasta``` - the fasta file containing all the query contigs for joining path search.
+
+```mapping.sam (or mapping.bam)``` - the paired-end reads mapping file of all contigs.
+
+
+
