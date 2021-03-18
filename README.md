@@ -9,7 +9,7 @@ Virus genomes assembled from short-reads sequenced metagenomes are usually fragm
 Figure 1. The EOL have been documented in manual genome curation, see [Chen et al. 2020. Genome Research](https://genome.cshlp.org/content/30/3/315.short) for details.
 
 ## Installation options
-COBRA is a python script that uses a list of frequently used python packages including:
+COBRA is a python script (version 3.7 or higher) that uses a list of frequently used python packages including:
 ```
 Bio
 Bio.Seq
@@ -20,7 +20,7 @@ pysam
 time
 ```
 
-The only third-party software that the user should have is [BLASTn](https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download).
+Once these packages are available, the only third-party software that the user should have is [BLASTn](https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download).
 
 ## Input files
 COBRA needs four files as inputs, i.e., 
