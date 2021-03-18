@@ -100,7 +100,9 @@ For all the quries, COBRA assigns them to different categories based on their jo
 * "extended < 10k" - the query contig was joined and extended fewer than 10 kbp.
 * "extended_failed" - tthe query contig was not able to be extended due to different reasons (i.e., "COBRA rules", "DNA break or low abundance" and "Unexpected_assembly_break_or_short_piece_missing"). 
 
+
 For the joined and extended queries in each category, only the unique ones (```*.fasta```) will be saved for users' following analyses, and the sequence information (e.g., length, coverage, GC, num of Ns) is summarized in the ```*fasta.summary.txt``` files. For categories of "extended_circular", "extended >= 10k" and "extended < 10k", the joining details of each query are included in the corresponding folder and ```*joining_details.txt``` file.
+
 
 For those queries resulting in the "extended_circular" category, if "equal_path" exists (Figure 2), COBRA will output both the ```dominant genome``` with the dominant path and the ```rare genome``` with the rare path (Figure 3).
 
@@ -108,9 +110,11 @@ For those queries resulting in the "extended_circular" category, if "equal_path"
 
 Figure 2. The equal pathes originating from within-population diversity (or local diversity).
 
+
 ![image](https://user-images.githubusercontent.com/46725273/111668676-390dff80-87d3-11eb-87e5-b16251f06b73.png)
 
 Figure 3. Information of COBRA "extended_circular" genomes (dominant and rare).
+
 
 ## Citation
 The manuscript is in preparation (Chen et al., in prep).
