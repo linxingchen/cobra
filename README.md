@@ -45,7 +45,7 @@ COBRA needs four files as inputs, i.e.,
 
 * ```all.contigs.fasta``` - the whole contig set from the assembly, note that IDBA_UD and MEGAHIT usually save contigs with a minimun length of 200 bp.
 
-* ```coverage.txt``` - a two columns (tab) file of the coverage of all contigs, example below:
+* ```coverage.txt``` - a two columns (tab) file of the coverage of all contigs (*Note that metaSPAdes contigs have coverage information (not absolute coverage though) in their headers, which will be used by COBRA if no ```coverage.txt``` file is provided.*), example below:
 
 ```contig-140_0    25.552
 contig-140_1    42.1388
@@ -54,7 +54,6 @@ contig-140_3    15.4817
 contig-140_4    41.2746
 ...
 ```
-*Note that metaSPAdes contigs have coverage information (not absolute coverage though) in their headers, which will be used by COBRA if no ```coverage.txt``` file is provided.*
 
 * ```queries.fasta``` - the fasta file containing all the query contigs for joining path search.
 
