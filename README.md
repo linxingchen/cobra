@@ -115,7 +115,7 @@ Figure 2. The equal pathes originating from within-population diversity (or loca
 
 Figure 3. Information of COBRA "extended_circular" genomes (dominant and rare).
 
-
+### log file
 The ```log``` file gives a summary of the joining status of all queries, example shown below:
 
 ```
