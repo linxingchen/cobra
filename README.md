@@ -9,7 +9,7 @@ Virus genomes assembled from short-reads sequenced metagenomes are usually fragm
 Figure 1. The EOL have been documented in manual genome curation, see [Chen et al. 2020. Genome Research](https://genome.cshlp.org/content/30/3/315.short) for details.
 
 ## Installation
-COBRA is a python script (version 3.7 or higher) that uses a list of frequently used python packages including:
+COBRA is a python script (tested for version 3.7 or higher) that uses a list of frequently used python packages including:
 ```
 Bio
 Bio.Seq
