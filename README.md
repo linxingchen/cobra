@@ -61,7 +61,7 @@ contig-140_4    41.2746
 * ```mapping.sam (or mapping.bam)``` - the paired-end reads mapping file of all contigs.
 
 
-Three additional flags should be provided for COBRA to determine the EOL, i.e.,
+Two additional flags should be provided for COBRA to determine the EOL, i.e.,
 
 * ```assembler``` - currently only 'idba' (for IDBA_UD), 'metaspades' (for metaSPAdes), and 'megahit' (for MEGAHIT).
 
