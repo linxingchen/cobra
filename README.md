@@ -101,10 +101,10 @@ COBRA_category_ii_extended_circular_unique.fasta.summary.txt
 COBRA_category_ii_extended_circular_unique_joining_details.txt
 COBRA_category_ii_extended_failed.fasta
 COBRA_category_ii_extended_failed.fasta.summary.txt
-COBRA_category_ii_extended_ok_unique (folder)
-COBRA_category_ii_extended_ok_unique.fasta
-COBRA_category_ii_extended_ok_unique.fasta.summary.txt
-COBRA_category_ii_extended_ok_unique_joining_details.txt
+COBRA_category_ii_extended_partial_unique (folder)
+COBRA_category_ii_extended_partial_unique.fasta
+COBRA_category_ii_extended_partial_unique.fasta.summary.txt
+COBRA_category_ii_extended_partial_unique_joining_details.txt
 COBRA_category_iii_DNA_break.fasta
 COBRA_category_iii_DNA_break.fasta.summary.txt
 COBRA_joining_status.txt
@@ -117,11 +117,11 @@ For all the quries, COBRA assigns them to different categories based on their jo
 
 * "self_circular" - the query contig itself is a circular genome.
 * "extended_circular" - the query contig was joined and exteneded into a circular genome.
-* "extended_ok" - the query contig was joined and extended but not to circular.
-* "extended_failed" - tthe query contig was not able to be extended due to different reasons (i.e., "COBRA rules", "DNA break or low abundance" and "Unexpected_assembly_break_or_short_piece_missing"). 
+* "extended_partial" - the query contig was joined and extended but not to circular.
+* "extended_failed" - the query contig was not able to be extended due to COBRA rules. 
 * "DNA break" - neither end of a given contig share EOL with others.
 
-For the joined and extended queries in each category, only the unique ones (```*.fasta```) will be saved for users' following analyses, and the sequence information (e.g., length, coverage, GC, num of Ns) is summarized in the ```*fasta.summary.txt``` files. For categories of "extended_circular", "extended >= 10k" and "extended < 10k", the joining details of each query are included in the corresponding folder and ```*joining_details.txt``` file, and summarized in the ```COBRA_joining_summary.txt``` file, example shown below:
+For the joined and extended queries in each category, only the unique ones (```*.fasta```) will be saved for users' following analyses, and the sequence information (e.g., length, coverage, GC, num of Ns) is summarized in the ```*fasta.summary.txt``` files. For categories of "extended_circular", and "extended_partial", the joining details of each query are included in the corresponding folder and ```*joining_details.txt``` file, and summarized in the ```COBRA_joining_summary.txt``` file, example shown below:
 
 ```
 QuerySeqID      QuerySeqLen     TotRetSeqs      TotRetLen       AssembledLen    ExtendedLen     Status
@@ -175,7 +175,7 @@ Final summary
 Total queries: 551
 Category i - Self_circular: 24
 Category ii - Extended_circular: 53 (Unique: 37)
-Category ii - Extended_ok: 289 (Unique: 239)
+Category ii - Extended_partial: 289 (Unique: 239)
 Category ii - Failed due to COBRA rules: 67
 Category iii - Failed due to DNA break: 118
 ======================================================================================================================================================
