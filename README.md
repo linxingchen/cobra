@@ -20,7 +20,8 @@ COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher 
 ## How COBRA works
 * COBRA determines the EOL (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired end reads mapping) (**Figrue 3**).
 
-![image](https://user-images.githubusercontent.com/46725273/137677972-d181aae7-a4dd-4ae1-8949-1b461092858c.png)
+![image](https://user-images.githubusercontent.com/46725273/137975395-c7556cf1-ad36-4c55-a72b-b3de4b396b38.png)
+
 
 
 **Figure 3. The workfolw of COBRA.**
