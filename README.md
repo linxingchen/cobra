@@ -2,7 +2,7 @@
 COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher quality virus genomes assembled from short-read metagenomes. Which was written in python.
 
 ## Introduction
-* Virus genomes assembled from short-reads sequenced metagenomes are usually fragmented due to intra-genome repeats and within-population variations (or subpopulation diversity, or local diversity), as the widely used assemblers based on de Bruijn graphs, e.g., metaSPAdes, IDBA_UD and MEGAHIT, tend to have a breaking point when multiple paths are available instead of making risky extension (see example in **Figure 1**). 
+* The genomes assembled from short-reads sequenced metagenomes are usually fragmented due to intra-genome repeats and within-population variations (or subpopulation diversity, or local diversity), as the widely used assemblers based on de Bruijn graphs, e.g., metaSPAdes, IDBA_UD and MEGAHIT, tend to have a breaking point when multiple paths are available instead of making risky extension (see example in **Figure 1**). 
 
 ![image](https://user-images.githubusercontent.com/46725273/111676563-8a21f180-87db-11eb-9b8c-4c63fb993936.png)
 
