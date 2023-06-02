@@ -188,4 +188,4 @@ contig-140_188  38386   5       48986   48291   9905    Extended_circular
 
 ##
 ## Citation
-The manuscript is in preparation (Chen et al., in prep).
+The preprint is available at bioRxiv (doi: https://doi.org/10.1101/2023.05.30.542503). Please cite if you find it helpful for your analyses.
