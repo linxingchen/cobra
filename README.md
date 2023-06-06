@@ -65,6 +65,20 @@ Optional flag
 * ```output``` - the name of output folder, otherwise it will be "{query.fasta}.COBRA" if not provided.
 
 ##
+## How to obtain the mapping file and the coverage file
+(1) mapping file
+Both Bowtie2 (https://github.com/BenLangmead/bowtie2) and bbmap (https://github.com/BioInfoTools/BBMap) are good to obtain the mapping file, please refer to the manual descriptions of the tools.
+
+(2) coverage file
+The tool of "jgi_summarize_bam_contig_depths" from MetaBAT (https://bitbucket.org/berkeleylab/metabat/src/master/) is sufficient to generate the coverage of contigs, the resulting profile should be transferred to get a two-column file devided by tab.
+
+```jgi_summarize_bam_contig_depths --outputDepth coverage.txt *sam```
+
+or 
+
+```jgi_summarize_bam_contig_depths --outputDepth coverage.txt *bam```
+
+##
 ## How to run
 (1) The users can only specify the required parameters:
 
