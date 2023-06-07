@@ -39,7 +39,7 @@ Once these packages are available, the only third-party software that the user s
 
 ##
 ## Input files
-COBRA needs four files as inputs, i.e., 
+(1) COBRA needs four files as inputs, i.e., 
 
 * ```all.contigs.fasta``` - the whole contig set from the assembly, note that IDBA_UD and MEGAHIT usually save contigs with a minimun length of 200 bp.
 
@@ -55,12 +55,14 @@ contig-140_4    41.2746
 
 * ```query.fasta``` - the fasta file containing all the query contigs for joining path search.
 * ```mapping.sam (or mapping.bam)``` - the paired-end reads mapping file of all contigs.
+
+(2) and three parameters
 * ```assembler``` - currently only 'idba' (for IDBA_UD), 'metaspades' (for metaSPAdes), and 'megahit' (for MEGAHIT).
 * ```maxk``` - the largest kmer used in de novo assembly.
 * ```mink``` - the smallest kmer used in de novo assembly.
 
 
-Optional flag
+(3) Optional flags
 * ```mismatch``` - the number of read mapping mismatches allowed when determining if two contigs were spanned by paired reads.
 * ```output``` - the name of output folder, otherwise it will be "{query.fasta}.COBRA" if not provided.
 
