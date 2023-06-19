@@ -284,8 +284,8 @@ def join_walker(contig, direction):
         elif target in two_paths_end:
             if link_pair[target][0].rsplit('_', 1)[0] != link_pair[target][1].rsplit('_', 1)[0]:
                 if cov[contig_name(target)] >= 1.9 * cov[contig]:
-                    print(contig, target, cov[contig_name(target)], cov[contig])
-                    #pass
+                    # print(contig, target, cov[contig_name(target)], cov[contig])
+                    pass
                 else:
                     if not_checked(link_pair[target], contig_checked[end]):
                         if are_equal_paths(link_pair[target]):
