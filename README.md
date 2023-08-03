@@ -90,18 +90,16 @@ For example,
 
 (2) with BBMap (https://github.com/BioInfoTools/BBMap)
 
-* ```bbmap.sh ref=contigs.fasta``` (may not need)
-* ```bbmap.sh ref=contigs.fasta in1=R1.fastq.gz in2=R2.fastq.gz threads=16 out=output.sam```
+* ```bbmap.sh ref=contigs.fasta in1=R1.fastq.gz in2=R2.fastq.gz threads=16 out=output.sam``` (good)
 * ```samtools view -bS output.sam > output.bam```
 * ```samtools sort -o sorted_output.bam output.bam```
 
-* ```bbmap.sh ref=contigs.fasta in1=R1.fastq.gz in2=R2.fastq.gz threads=16 | samtools view -bS - | samtools sort -o sorted_output.bam -```
-  
 
 ##  How to obtain the coverage file
-Once the sorted sam or bam file is ready, the tool of "jgi_summarize_bam_contig_depths" from MetaBAT (https://bitbucket.org/berkeleylab/metabat/src/master/), or could be used to obtain the coverage file, the resulting profile should be transferred to get a two-column file divided by tab.
 
 (1) with jgi_summarize_bam_contig_depths
+
+Once the sorted sam or bam file is ready, the tool of "jgi_summarize_bam_contig_depths" from MetaBAT (https://bitbucket.org/berkeleylab/metabat/src/master/), or could be used to obtain the coverage file, the resulting profile should be transferred to get a two-column file divided by tab.
 
 * ```jgi_summarize_bam_contig_depths --outputDepth original.coverage.txt *sam``` 
 
@@ -112,7 +110,13 @@ The output file from jgi_summarize_bam_contig_depths could be converted to a two
 * ```python coverage.transfer.py -i original.coverage.txt -o coverage.txt```
 
 
-(2) 
+(2) CoverM (https://github.com/wwood/CoverM)
+
+* ``` ```
+
+* ``` ```
+
+(3) pyCoverM (https://github.com/apcamargo/pycoverm)
 
 * ``` ```
 
