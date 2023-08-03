@@ -69,20 +69,55 @@ contig-140_4    41.2746
 * ```-t/--threads```: the number of threads used for BLASTn search.
 
 ##
-## How to obtain the mapping file and the coverage file
-(1) mapping file:
+## How to obtain the mapping file
 
-Both Bowtie2 (https://github.com/BenLangmead/bowtie2) and bbmap (https://github.com/BioInfoTools/BBMap) are good to obtain the mapping file, please refer to the manual descriptions of the tools.
+The mapping file could be obtained with tools like Bowtie2 and BBMap, please refer to the manual descriptions for details of the tools. Below is the general way to get the sorted sam/bam file, you thus need to be available to samtools (which could be get here - https://github.com/samtools/samtools).
 
-(2) coverage file:
+For example, 
 
-The tool of "jgi_summarize_bam_contig_depths" from MetaBAT (https://bitbucket.org/berkeleylab/metabat/src/master/) is sufficient to generate the coverage of contigs, the resulting profile should be transferred to get a two-column file devided by tab.
+* ```contig file = "contigs.fasta"```
 
-```jgi_summarize_bam_contig_depths --outputDepth coverage.txt *sam```
+* ```first read file = "R1.fastq.gz"```
 
-or 
+* ```second read file = "R2.fastq.gz"```
 
-```jgi_summarize_bam_contig_depths --outputDepth coverage.txt *bam```
+(1) with Bowtie2 (https://github.com/BenLangmead/bowtie2)
+
+* ```bowtie2-build contigs.fasta contigs.fasta```
+
+* ```bowtie2 -p 16 -x contigs.fasta -1 R1.fastq.gz -2 R2.fastq.gz -S output.sam && samtools view -bS output.sam | samtools sort -o sorted_output.bam -```
+
+
+(2) with BBMap (https://github.com/BioInfoTools/BBMap)
+
+* ```bbmap.sh ref=contigs.fasta``` (may not need)
+* ```bbmap.sh ref=contigs.fasta in1=R1.fastq.gz in2=R2.fastq.gz threads=16 out=output.sam```
+* ```samtools view -bS output.sam > output.bam```
+* ```samtools sort -o sorted_output.bam output.bam```
+
+* ```bbmap.sh ref=contigs.fasta in1=R1.fastq.gz in2=R2.fastq.gz threads=16 | samtools view -bS - | samtools sort -o sorted_output.bam -```
+  
+
+##  How to obtain the coverage file
+Once the sorted sam or bam file is ready, the tool of "jgi_summarize_bam_contig_depths" from MetaBAT (https://bitbucket.org/berkeleylab/metabat/src/master/), or could be used to obtain the coverage file, the resulting profile should be transferred to get a two-column file divided by tab.
+
+(1) with jgi_summarize_bam_contig_depths
+
+* ```jgi_summarize_bam_contig_depths --outputDepth original.coverage.txt *sam``` 
+
+* ```jgi_summarize_bam_contig_depths --outputDepth original.coverage.txt *bam```
+
+The output file from jgi_summarize_bam_contig_depths could be converted to a two-column file divided by tab using the script provided in this study (coverage.transfer.py).
+
+* ```python coverage.transfer.py -i original.coverage.txt -o coverage.txt```
+
+
+(2) 
+
+* ``` ```
+
+* ``` ```
+
 
 ##
 ## How to run
