@@ -41,9 +41,9 @@ Once these packages are available, the only third-party software that the user s
 ## Input files
 (1) COBRA needs four files as inputs, i.e., 
 
-* ```all.contigs.fasta``` - the whole contig set from the assembly, note that IDBA_UD and MEGAHIT usually save contigs with a minimun length of 200 bp.
+* ```-f/--fasta```: A fasta format file containing all the contigs from a single assembly, note that IDBA_UD and MEGAHIT usually save contigs with a minimum length of 200 bp.
 
-* ```coverage.txt``` - a two columns (tab) file of the coverage of all contigs, example below:
+* ```-c/--coverage```: a two columns (separated by tab) file of the sequencing coverage of all contigs in the ```-f/--fasta``` file, example below:
 
 ```contig-140_0    25.552
 contig-140_1    42.1388
@@ -53,25 +53,29 @@ contig-140_4    41.2746
 ...
 ```
 
-* ```query.fasta``` - the fasta file containing all the query contigs for joining path search.
-* ```mapping.sam (or mapping.bam)``` - the paired-end reads mapping file of all contigs.
+* ```-q/--query```: the query contigs that the user wants COBRA to extend, could be provided in a fasta format file, or a one-column text file with the names of the query contigs. Please make sure the names are exactly the same format as in the ```-f/--fasta``` file, otherwise, COBRA may have problems extending them.
+  
+* ```-m/--mapping```: the paired-end reads mapping file of all contigs in the ```-f/--fasta``` file, could be sam or bam file.
 
 (2) and three parameters
-* ```assembler``` - currently only 'idba' (for IDBA_UD), 'metaspades' (for metaSPAdes), and 'megahit' (for MEGAHIT).
-* ```maxk``` - the largest kmer used in de novo assembly.
-* ```mink``` - the smallest kmer used in de novo assembly.
+* ```-a/--assembler```: the name of the de novo assembler used, currently only 'idba' (for IDBA_UD), 'metaspades' (for metaSPAdes), and 'megahit' (for MEGAHIT).
+* ```-maxk/--maxk```: the largest kmer used in de novo assembly.
+* ```-mink/--mink```: the smallest kmer used in de novo assembly.
 
 
 (3) Optional flags
-* ```mismatch``` - the number of read mapping mismatches allowed when determining if two contigs were spanned by paired reads.
-* ```output``` - the name of output folder, otherwise it will be "{query.fasta}.COBRA" if not provided.
+* ```-lm/--linkage_mismatch```: the number of read mapping mismatches allowed when determining if two contigs were spanned by paired reads.
+* ```-o/--output```: the name of the output folder, otherwise it will be "{```-q/--query```}.COBRA" if not provided.
+* ```-t/--threads```: the number of threads used for BLASTn search.
 
 ##
 ## How to obtain the mapping file and the coverage file
-(1) mapping file
+(1) mapping file:
+
 Both Bowtie2 (https://github.com/BenLangmead/bowtie2) and bbmap (https://github.com/BioInfoTools/BBMap) are good to obtain the mapping file, please refer to the manual descriptions of the tools.
 
-(2) coverage file
+(2) coverage file:
+
 The tool of "jgi_summarize_bam_contig_depths" from MetaBAT (https://bitbucket.org/berkeleylab/metabat/src/master/) is sufficient to generate the coverage of contigs, the resulting profile should be transferred to get a two-column file devided by tab.
 
 ```jgi_summarize_bam_contig_depths --outputDepth coverage.txt *sam```
