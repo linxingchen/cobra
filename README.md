@@ -26,7 +26,7 @@ Figure 2. The "expected overlap length" has been documented in manual genome cur
 
 COBRA determines the "expected overlap length" (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired-end reads mapping) (Figure 3).
 
-![Figure 1](https://github.com/linxingchen/cobra.github.io/assets/46725273/66bef1ad-a71f-4932-a7d4-6f20a23c5cc6)
+![Figure 1](https://github.com/linxingchen/cobra.github.io/assets/46725273/f1ddf725-a8e4-4305-b0b1-44e8c6bb346c)
 
 Figure 3. The workflow of COBRA.
 
