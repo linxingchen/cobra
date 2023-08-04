@@ -1,30 +1,38 @@
 # COBRA
-COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher quality virus genomes assembled from short-read metagenomes. Which was written in python.
+COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher quality viral genomes assembled from metagenomes of short paired-end reads. COBRA was written in Python. COBRA has so far only been tested on assembled contigs from metaSPAdes, IDBA_UD, and MEGAHIT.
 
 ## Introduction
-* The genomes assembled from short-reads sequenced metagenomes are usually fragmented due to (1) intra-genome repeats, (2) inter-genome shared region, and (3) within-population variations, as the widely utilized assemblers based on de Bruijn graphs, e.g., metaSPAdes, IDBA_UD and MEGAHIT, tend to have a breaking point when multiple paths are available instead of making risky extension (see example in **Figure 1**). 
+
+**1. Why metagenomic contigs are fragmented?**
+
+The genomes assembled from short paired-end reads based metagenomes are usually fragmented due to (1) intra-genome repeats, (2) inter-genome shared region, and (3) within-population variations, as the widely utilized assemblers based on de Bruijn graphs, e.g., metaSPAdes, IDBA_UD and MEGAHIT, tend to have a breaking point when multiple paths are available instead of making risky extension (see example in **Figure 1**). 
 
 ![image](https://user-images.githubusercontent.com/46725273/111676563-8a21f180-87db-11eb-9b8c-4c63fb993936.png)
 
-**Figure 1. Example of how assemblers break in assembly when within-population occurs.**
+Figure 1. Example of how assemblers break in assembly when within-population occurs.
 
-* According to the principles of the abovementioned assemblers, the broken contigs have an end overlap with determined length, that is the max-kmer used in de nono assembly for metaSPAdes and MEGAHIT, and the max-kmer - 1 for IDBA_UD, which we termed as "expected overlap length" (**Figures 1 and 2**). Note: as COBRA will use the information provided by paired-end reads, thus only those samples sequenced by paired-end technology should work.
+**2. Contigs may be joined with expected end overlap.**
+
+According to the principles of the abovementioned assemblers, the broken contigs have an end overlap with determined length, that is the max-kmer (maxK hereafter) used in de nono assembly for metaSPAdes and MEGAHIT, and the maxK-1 for IDBA_UD, which we termed as "expected overlap length" (Figures 1 and 2). 
+
+* Note: as COBRA will use the information provided by paired-end reads, thus only those samples sequenced by paired-end technology should work.
 
 ![image](https://user-images.githubusercontent.com/46725273/111677281-4c719880-87dc-11eb-85a9-a62906f4e10b.png)
 
-**Figure 2. The "expected overlap length" has been documented in manual genome curation, see [Chen et al. 2020. Genome Research](https://genome.cshlp.org/content/30/3/315.short) for details.**
+Figure 2. The "expected overlap length" has been documented in manual genome curation, see [Chen et al. 2020. Genome Research](https://genome.cshlp.org/content/30/3/315.short) for details.
 
 ##
 ## How COBRA works
-* COBRA determines the "expected overlap length" (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired end reads mapping) (**Figrue 3**).
+
+COBRA determines the "expected overlap length" (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired-end reads mapping) (Figure 3).
 
 ![Figure 1](https://github.com/linxingchen/cobra.github.io/assets/46725273/66bef1ad-a71f-4932-a7d4-6f20a23c5cc6)
 
-**Figure 3. The workfolw of COBRA.**
+Figure 3. The workflow of COBRA.
 
 ##
 ## Installation
-COBRA is a python script (tested for version 3.7 or higher) that uses a list of frequently used python packages including:
+COBRA is a Python script (tested for version 3.7 or higher) that uses a list of frequently used Python packages including:
 ```
 Bio
 Bio.Seq
@@ -128,7 +136,7 @@ pyCoverM is a simple Python interface to CoverM's fast coverage estimation funct
 python cobra.py -f input.fasta -q query.fasta -c coverage.txt -m mapping.sam -a idba -mink 20 -maxk 140
 ```
 
-(2) The users could also include the optional parameters like output name (-o), mismatch of mapped reads for linkage identifcation (-mm)
+(2) The users could also include the optional parameters like output name (-o), mismatch of mapped reads for linkage identification (-mm)
 
 ```
 python cobra.py -f all.contigs.fasta -q query.fasta -o query.fasta.COBRA.out -c coverage.txt -m mapping.sam -a idba -mink 20 -maxk 140 -mm 2
@@ -144,7 +152,7 @@ python cobra.py -f all.contigs.fasta -q query.fasta -o query.fasta.COBRA.out -c 
 
 ##
 ## Output files
-Below is a general list of output files in the ```query.fasta.COBRA.out``` folder:
+Below is a general list of output files in the output folder:
 
 ```
 COBRA_category_i_self_circular_queries_trimmed.fasta
@@ -172,12 +180,12 @@ contig.new.fa
 For all the queries, COBRA assigns them to different categories based on their joining status (detailed in the ```COBRA_joining_status.txt``` file), i.e.,
 
 * "self_circular" - the query contig itself is a circular genome.
-* "extended_circular" - the query contig was joined and exteneded into a circular genome.
+* "extended_circular" - the query contig was joined and extended into a circular genome.
 * "extended_partial" - the query contig was joined and extended but not to circular.
 * "extended_failed" - the query contig was not able to be extended due to COBRA rules. 
-* "orphan end" - neither end of a given contig share "expected overlap length" with others.
+* "orphan end" - neither end of a given contig shares "expected overlap length" with others.
 
-For the joined and extended queries in each category, only the unique ones (```*.fasta```) will be saved for users' following analyses, and the sequence information (e.g., length, coverage, GC, num of Ns) is summarized in the ```*fasta.summary.txt``` files. For categories of "extended_circular", and "extended_partial", the joining details of each query are included in the corresponding folder and ```*joining_details.txt``` file, and summarized in the ```COBRA_joining_summary.txt``` file, example shown below:
+For the joined and extended queries in each category, only the unique ones (```*.fasta```) will be saved for users' following analyses, and the sequence information (e.g., length, coverage, GC, num of Ns) is summarized in the ```*fasta.summary.txt``` files. For categories of "extended_circular", and "extended_partial", the joining details of each query are included in the corresponding folder and ```*joining_details.txt``` file, and summarized in the ```COBRA_joining_summary.txt``` file, an example shown below:
 
 ```
 QuerySeqID      QuerySeqLen     TotRetSeqs      TotRetLen       AssembledLen    ExtendedLen     Status
@@ -190,7 +198,7 @@ contig-140_188  38386   5       48986   48291   9905    Extended_circular
 ```
 
 
-* **log file:** The ```log``` file includes the content of each processing step, example shown below:
+* **log file:** The ```log``` file includes the content of each processing step, an example shown below:
 
 ```
 1. INPUT INFORMATION
@@ -245,3 +253,7 @@ contig-140_188  38386   5       48986   48291   9905    Extended_circular
 ##
 ## Citation
 The preprint is available at bioRxiv (doi: https://doi.org/10.1101/2023.05.30.542503). Please cite if you find it helpful for your analyses.
+
+##
+## Questions
+Please do not hesitate to contact me for any questions you have when using COBRA via my email (linkingchan@gmail.com), or Twitter (https://twitter.com/ChenLinxing).
