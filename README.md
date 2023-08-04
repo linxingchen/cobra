@@ -8,17 +8,17 @@ COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher 
 
 **Figure 1. Example of how assemblers break in assembly when within-population occurs.**
 
-* According to the principles of the abovementioned assemblers, the broken contigs have an end overlap with determined length, that is the max-kmer used in de nono assembly for metaSPAdes and MEGAHIT, and the max-kmer - 1 for IDBA_UD, which we termed as "expected overlap length" (**Figures 1 and 2**). Note: as COBRA will use information provided by paired-end reads, thus only those samples sequenced by paired-end technology should work.
+* According to the principles of the abovementioned assemblers, the broken contigs have an end overlap with determined length, that is the max-kmer used in de nono assembly for metaSPAdes and MEGAHIT, and the max-kmer - 1 for IDBA_UD, which we termed as "expected overlap length" (**Figures 1 and 2**). Note: as COBRA will use the information provided by paired-end reads, thus only those samples sequenced by paired-end technology should work.
 
 ![image](https://user-images.githubusercontent.com/46725273/111677281-4c719880-87dc-11eb-85a9-a62906f4e10b.png)
 
-**Figure 2. The "expected overlap length" have been documented in manual genome curation, see [Chen et al. 2020. Genome Research](https://genome.cshlp.org/content/30/3/315.short) for details.**
+**Figure 2. The "expected overlap length" has been documented in manual genome curation, see [Chen et al. 2020. Genome Research](https://genome.cshlp.org/content/30/3/315.short) for details.**
 
 ##
 ## How COBRA works
 * COBRA determines the "expected overlap length" (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired end reads mapping) (**Figrue 3**).
 
-![Figure 1](https://github.com/linxingchen/cobra.github.io/assets/46725273/a5148ae5-50ee-4b3c-855a-acff10311a18)
+![Figure 1](https://github.com/linxingchen/cobra.github.io/assets/46725273/66bef1ad-a71f-4932-a7d4-6f20a23c5cc6)
 
 **Figure 3. The workfolw of COBRA.**
 
@@ -110,17 +110,14 @@ The output file from jgi_summarize_bam_contig_depths could be converted to a two
 * ```python coverage.transfer.py -i original.coverage.txt -o coverage.txt```
 
 
-(2) CoverM (https://github.com/wwood/CoverM)
+(2) CoverM 
 
-* ``` ```
+CoverM is a fast DNA read coverage and relative abundance calculator focused on metagenomics applications. Usage could be found here (https://github.com/wwood/CoverM).
 
-* ``` ```
 
-(3) pyCoverM (https://github.com/apcamargo/pycoverm)
+(3) pyCoverM 
 
-* ``` ```
-
-* ``` ```
+pyCoverM is a simple Python interface to CoverM's fast coverage estimation functions, which could be found here (https://github.com/apcamargo/pycoverm).
 
 
 ##
