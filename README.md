@@ -28,7 +28,7 @@ COBRA determines the "expected overlap length" (both the forward direction and r
 
 Note that scaffolds (for example, metaSPAdes assembly) could be used as input for COBRA extension, however, we suggest not using scaffolds from IDBA_UD as the potential errors in the scaffolding step (see [Chen et al. 2020](https://genome.cshlp.org/content/30/3/315.short) for details). Thus, for IDBA_UD and MEGAHIT assembly, the contigs should be used.
 
-![Figure 1](https://github.com/linxingchen/cobra.github.io/assets/46725273/f1ddf725-a8e4-4305-b0b1-44e8c6bb346c)
+![Figure 1](https://github.com/linxingchen/cobra.github.io/assets/46725273/b4dfe26a-794a-4384-9c15-12762b5e7e10)
 
 Figure 3. The workflow of COBRA.
 
