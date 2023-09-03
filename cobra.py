@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # Author: Lin-Xing Chen, UC Berkeley
 
-# COBRA v1.1.54
+# COBRA v1.2.0
 # Contig Overlap Based Re-Assembly
 # Modification date: May 4, 2023
 
@@ -20,7 +20,8 @@ import itertools
 parser = argparse.ArgumentParser(description="This script is used to get higher quality (including circular) virus genomes "
                                              "by joining assembled contigs based on their end overlaps.")
 requiredNamed = parser.add_argument_group('required named arguments')
-requiredNamed.add_argument("-q", "--query", type=str, help="the query contigs file (fasta format).", required=True)
+requiredNamed.add_argument("-q", "--query", type=str, help="the query contigs file (fasta format), or the query name "
+                                                           "list (text file, one column).", required=True)
 requiredNamed.add_argument("-f", "--fasta", type=str, help="the whole set of assembled contigs (fasta format).", required=True)
 requiredNamed.add_argument("-a", "--assembler", type=str, choices=["idba", "megahit", "metaspades"],
                            help="de novo assembler used, COBRA not tested for others.", required=True)
@@ -34,7 +35,7 @@ parser.add_argument("-lm", "--linkage_mismatch", type=int, default=2, help="the 
                                                                            "paired reads. [2]")
 parser.add_argument("-o", "--output", type=str, help="the name of output folder (default = '<query>_COBRA').")
 parser.add_argument("-t", "--threads", type=int, default=16, help="the number of threads for blastn. [16]")
-parser.add_argument("-v", "--version", action='version', version='COBRA v1.1.54')
+parser.add_argument("-v", "--version", action='version', version='COBRA v1.2.0')
 args = parser.parse_args()
 
 
@@ -45,14 +46,33 @@ def log_info(step, description, line_feed, log_file):
     print(step + localtime + description, end=line_feed, file=log_file, flush=True)
 
 
-def contig_name(end_name):  # get contig name from end name
+def determine_file_format(filename):
+    """
+    Determine the format of the input file.
+    Returns either "fasta" or "txt" based on the content.
+    """
+    with open(filename, 'r') as f:
+        first_line = f.readline().strip()
+        if first_line.startswith(">"):
+            return "fasta"
+        else:
+            return "txt"
+
+
+def contig_name(end_name):
+    """
+    get contig name from end name
+    """
     if end_name.endswith('_L') or end_name.endswith('_R') or end_name.endswith('_Lrc') or end_name.endswith('_Rrc'):
         return end_name.rsplit('_', 1)[0]
     else:
         return end_name
 
 
-def get_target(item):  # to get the target for next run of joining
+def get_target(item):
+    """
+    to get the target for next run of joining
+    """
     suffix = item.rsplit('_', 1)[1]
     base_name = item.rsplit('_', 1)[0]
 
@@ -66,7 +86,10 @@ def get_target(item):  # to get the target for next run of joining
         return base_name + '_R'
 
 
-def are_equal_paths(two_paths):  # evaluate if two paths are equal, two_paths is a list including two ends, e.g., a_L, b_R
+def are_equal_paths(two_paths):
+    """
+    evaluate if two paths are equal, two_paths is a list including two ends, e.g., a_L, b_R
+    """
     if two_paths[0].rsplit('_', 1)[1].startswith('L') and two_paths[1].rsplit('_', 1)[1].startswith('R'):
         return contig_name(two_paths[0]) + '_R' in one_path_end \
                and contig_name(two_paths[1]) + '_L' in one_path_end \
@@ -91,25 +114,31 @@ def are_equal_paths(two_paths):  # evaluate if two paths are equal, two_paths is
         return False
 
 
-def the_dominant_one(two_paths):  # get the dominant path from two equal paths
+def the_dominant_one(two_paths):
+    """
+    get the dominant path from two equal paths
+    """
     if cov[contig_name(two_paths[0])] >= cov[contig_name(two_paths[1])]:
         return two_paths[0]
     else:
         return two_paths[1]
 
 
-def could_circulate(point, contig, direction):  # check if the path is circular with the current contig included
+def could_circulate(point, contig, direction):
+    """
+    check if the path is circular with the current contig included
+    """
     if len(link_pair[point]) == 2:  # point is the same as "target" in join_walker
         if direction == 'L':
             if contig_name(link_pair[point][0]) == contig:
                 if cov[contig_name(point)] < 1.5 * cov[contig]:
                     # 2 times is for repeat, but it is too risky, use 1.5 instead (same below)
-                    return link_pair[point][0].endswith('_R') and [contig + '_R', point] in parsed_linkage
+                    return link_pair[point][0].endswith('_R') and (contig + '_R', point) in parsed_linkage
                 else:
                     return False
             elif contig_name(link_pair[point][1]) == contig:
                 if cov[contig_name(point)] < 1.5 * cov[contig]:
-                    return link_pair[point][1].endswith('_R') and [contig + '_R', point] in parsed_linkage
+                    return link_pair[point][1].endswith('_R') and (contig + '_R', point) in parsed_linkage
                 else:
                     return False
             else:
@@ -117,12 +146,12 @@ def could_circulate(point, contig, direction):  # check if the path is circular 
         elif direction == 'R':
             if contig_name(link_pair[point][0]) == contig:
                 if cov[contig_name(point)] < 1.5 * cov[contig]:
-                    return link_pair[point][0].endswith('_L') and [contig + '_L', point] in parsed_linkage
+                    return link_pair[point][0].endswith('_L') and (contig + '_L', point) in parsed_linkage
                 else:
                     return False
             elif contig_name(link_pair[point][1]) == contig:
                 if cov[contig_name(point)] < 1.5 * cov[contig]:
-                    return link_pair[point][1].endswith('_L') and [contig + '_L', point] in parsed_linkage
+                    return link_pair[point][1].endswith('_L') and (contig + '_L', point) in parsed_linkage
                 else:
                     return False
             else:
@@ -133,17 +162,19 @@ def could_circulate(point, contig, direction):  # check if the path is circular 
     elif len(link_pair[point]) == 1:
         if direction == 'L':
             if contig_name(link_pair[point][0]) == contig:
-                return link_pair[point][0].endswith('_R') and [contig + '_R', point] in parsed_linkage
+                return link_pair[point][0].endswith('_R') and (contig + '_R', point) in parsed_linkage
         elif direction == 'R':
             if contig_name(link_pair[point][0]) == contig:
-                return link_pair[point][0].endswith('_L') and [contig + '_L', point] in parsed_linkage
+                return link_pair[point][0].endswith('_L') and (contig + '_L', point) in parsed_linkage
 
     else:
         return False
 
 
 def the_better_one(two_paths, contig):
-    # Calculate the absolute differences in coverage
+    """
+    Calculate the absolute differences in coverage
+    """
     diff0 = abs(cov[contig] - cov[contig_name(two_paths[0])])
     diff1 = abs(cov[contig] - cov[contig_name(two_paths[1])])
 
@@ -164,7 +195,10 @@ def the_better_one(two_paths, contig):
             return two_paths[1]
 
 
-def other_end_is_extendable(end, contig):  # check if the other end is extendable
+def other_end_is_extendable(end, contig):
+    """
+    check if the other end is extendable
+    """
     if contig_name(end) not in self_circular:
         if 0.5 * cov[contig] <= cov[contig_name(end)] <= 2 * cov[contig]:
             if get_target(end) in link_pair.keys():
@@ -178,13 +212,18 @@ def other_end_is_extendable(end, contig):  # check if the other end is extendabl
 
 
 def is_ok_to_add(end, contig):
-    # if the other end of a potential joining contig cannot be extended,
-    # add only when it has a very similar coverage to that of the query contig
+    """
+    if the other end of a potential joining contig cannot be extended,
+    add only when it has a very similar coverage to that of the query contig
+    """
     if contig_name(end) not in self_circular:
         return 0.9 * cov[contig] <= cov[contig_name(end)] <= 1.11 * cov[contig]
 
 
-def not_checked(end_list, checked):  # to see if a potential contig has been checked for adding or not
+def not_checked(end_list, checked):
+    """
+    to see if a potential contig has been checked for adding or not
+    """
     total_checked = 0
     for end in end_list:
         if contig_name(end) in checked:
@@ -193,6 +232,9 @@ def not_checked(end_list, checked):  # to see if a potential contig has been che
 
 
 def detect_self_circular(contig):
+    """
+    to determine the input sequences if they are self_circular genomes or not
+    """
     end = contig + '_L'
     if end in one_path_end:
         if link_pair[end][0] == contig + '_R':
@@ -213,19 +255,21 @@ def detect_self_circular(contig):
 
 
 def join_walker(contig, direction):
-    # get potential joins for a given query
+    """
+    get potential joins for a given query
+    """
     end = contig + '_' + direction
     a = len(contig2join[end])
     if a == 0:
         contig_checked[end].append(contig)
         if end in one_path_end:
             if contig_name(link_pair[end][0]) != contig:
-                if other_end_is_extendable(link_pair[end][0], contig) and [end, link_pair[end][0]] in parsed_linkage \
+                if other_end_is_extendable(link_pair[end][0], contig) and (end, link_pair[end][0]) in parsed_linkage \
                         and contig_name(link_pair[end][0]) not in self_circular:
                     contig2join[end].append(link_pair[end][0])
                     contig_checked[end].append(contig_name(link_pair[end][0]))
                     contig2join_reason[contig][contig_name(link_pair[end][0])] = 'other_end_is_extendable'
-                elif is_ok_to_add(link_pair[end][0], contig) and [end, link_pair[end][0]] in parsed_linkage \
+                elif is_ok_to_add(link_pair[end][0], contig) and (end, link_pair[end][0]) in parsed_linkage \
                         and contig_name(link_pair[end][0]) not in self_circular:
                     contig2join[end].append(link_pair[end][0])
                     contig_checked[end].append(contig_name(link_pair[end][0]))
@@ -264,12 +308,12 @@ def join_walker(contig, direction):
         target = get_target(contig2join[end][-1])
         if target in one_path_end:
             if not_checked(link_pair[target], contig_checked[end]):
-                if other_end_is_extendable(link_pair[target][0], contig) and [target, link_pair[target][0]] in parsed_linkage \
+                if other_end_is_extendable(link_pair[target][0], contig) and (target, link_pair[target][0]) in parsed_linkage \
                         and contig_name(link_pair[target][0]) not in self_circular:
                     contig2join[end].append(link_pair[target][0])
                     contig_checked[end].append(contig_name(link_pair[target][0]))
                     contig2join_reason[contig][contig_name(link_pair[target][0])] = 'other_end_is_extendable'
-                elif is_ok_to_add(link_pair[target][0], contig) and [target, link_pair[target][0]] in parsed_linkage \
+                elif is_ok_to_add(link_pair[target][0], contig) and (target, link_pair[target][0]) in parsed_linkage \
                         and contig_name(link_pair[target][0]) not in self_circular:
                     contig2join[end].append(link_pair[target][0])
                     contig_checked[end].append(contig_name(link_pair[target][0]))
@@ -284,7 +328,6 @@ def join_walker(contig, direction):
         elif target in two_paths_end:
             if link_pair[target][0].rsplit('_', 1)[0] != link_pair[target][1].rsplit('_', 1)[0]:
                 if cov[contig_name(target)] >= 1.9 * cov[contig]:
-                    # print(contig, target, cov[contig_name(target)], cov[contig])
                     pass
                 else:
                     if not_checked(link_pair[target], contig_checked[end]):
@@ -323,7 +366,10 @@ def join_walker(contig, direction):
     return a < len(contig2join[end])
 
 
-def join_seqs(contig):  # get the join order of the sequences in a give path
+def join_seqs(contig):
+    """
+    get the join order of the sequences in a give path
+    """
     order_all[contig] = []
     left = contig + '_L'
     right = contig + '_R'
@@ -373,7 +419,10 @@ def join_seqs(contig):  # get the join order of the sequences in a give path
                 order_all[contig].append(item)
 
 
-def retrieve(contig):  # to retrieve and save all the contigs in the joining path of a query
+def retrieve(contig):
+    """
+    to retrieve and save all the contigs in the joining path of a query
+    """
     if contig in order_all.keys() and len(order_all[contig]) > 0:
         out = open('COBRA_retrieved_for_joining/{0}_retrieved.fa'.format(contig), 'w')
         added = []
@@ -389,7 +438,10 @@ def retrieve(contig):  # to retrieve and save all the contigs in the joining pat
         pass
 
 
-def count_seq(fasta_file):  # calculate the number of seqs in a fasta file
+def count_seq(fasta_file):
+    """
+    calculate the number of seqs in a fasta file
+    """
     seq_num = 0
     a = open(fasta_file, 'r')
     for line in a.readlines():
@@ -399,7 +451,10 @@ def count_seq(fasta_file):  # calculate the number of seqs in a fasta file
     return seq_num
 
 
-def count_len(fasta_file):  # calculate the length of sequences in a fasta file
+def count_len(fasta_file):
+    """
+    calculate the length of sequences in a fasta file
+    """
     seq_len = 0
     a = open(fasta_file, 'r')
     for line in a.readlines():
@@ -409,7 +464,10 @@ def count_len(fasta_file):  # calculate the length of sequences in a fasta file
     return seq_len
 
 
-def summary_fasta(fasta_file):  # summary basic information of a fasta file
+def summary_fasta(fasta_file):
+    """
+    summary basic information of a fasta file
+    """
     summary_file = open('{0}.summary.txt'.format(fasta_file), 'w')
     if 'self_circular' in fasta_file:
         summary_file_headers = ['SeqID', 'Length', 'Coverage', 'GC', 'Ns', 'DTR_length', '\n']
@@ -451,7 +509,10 @@ def get_joined_seqs(fasta_file):
     return ','.join(joined_seqs[:])
 
 
-def summarize(contig):  # summary the retrieved contigs and joined information of each query
+def summarize(contig):
+    """
+    summary the retrieved contigs and joined information of each query
+    """
     if contig not in is_subset_of.keys():
         b = count_seq('COBRA_retrieved_for_joining/{0}_retrieved.fa'.format(contig))  # number of retrieved contigs
         c = count_len('COBRA_retrieved_for_joining/{0}_retrieved.fa'.format(contig))  # total length of retrieved contigs
@@ -484,14 +545,20 @@ def summarize(contig):  # summary the retrieved contigs and joined information o
                 return '\t'.join([str(b), e, str(c), str(d), str(d - header2len[contig]), 'Extended_partial'])
 
 
-def get_direction(item):  # get the direction in a joining path
+def get_direction(item):
+    """
+    get the direction in a joining path
+    """
     if item.endswith('rc'):
         return 'reverse'
     else:
         return 'forward'
 
 
-def total_length(contig_list):  # get the total length of all sequences in a joining path before overlap removing
+def total_length(contig_list):
+    """
+    get the total length of all sequences in a joining path before overlap removing
+    """
     total = 0
     for item in contig_list:
         total += header2len[contig_name(item)]
@@ -502,13 +569,13 @@ def total_length(contig_list):  # get the total length of all sequences in a joi
 # get information from the input files and parameters and save information
 # get the name of the query fasta file
 if '/' in args.query:
-    query_name = '{0}'.format(args.query).rsplit('/',1)[1]
+    query_name = '{0}'.format(args.query).rsplit('/', 1)[1]
 else:
     query_name = '{0}'.format(args.query)
 
 # get the name of the whole contigs fasta file
 if '/' in args.fasta:
-    fasta_name = '{0}'.format(args.fasta).rsplit('/',1)[1]
+    fasta_name = '{0}'.format(args.fasta).rsplit('/', 1)[1]
 else:
     fasta_name = '{0}'.format(args.fasta)
 
@@ -577,7 +644,7 @@ log.flush()
 
 ##
 # import the whole contigs and save their end sequences
-log_info('[01/22]', 'Reading contigs and getting the contig end sequences. ', '', log)
+log_info('[01/23]', 'Reading contigs and getting the contig end sequences. ', '', log)
 header2seq = {}
 header2len = {}
 gc = {}
@@ -586,24 +653,24 @@ R = {}
 Lrc = {}
 Rrc = {}
 
-f = open('{0}'.format(args.fasta), 'r')
-for record in SeqIO.parse(f, "fasta"):
-    header = str(record.id).strip()
-    seq = str(record.seq)
-    header2seq[header] = seq
-    gc[header] = str(round(GC(seq), 3))
-    header2len[header] = len(seq)
-    L[header + '_L'] = seq[0:length]  # the first x bp of left end
-    Lrc[header + '_Lrc'] = reverse_complement(seq[0:length])  # the reverse sequence of first x bp of left end
-    R[header + '_R'] = seq[-length:]  # the first x bp of right end
-    Rrc[header + '_Rrc'] = reverse_complement(seq[-length:])  # the reverse sequence of first x bp of right end
-f.close()
+with open('{0}'.format(args.fasta), 'r') as f:
+    for record in SeqIO.parse(f, "fasta"):
+        header = str(record.id).strip()
+        seq = str(record.seq)
+        header2seq[header] = seq
+        gc[header] = str(round(GC(seq), 3))
+        header2len[header] = len(seq)
+        L[header + '_L'] = seq[0:length]  # the first x bp of left end
+        Lrc[header + '_Lrc'] = reverse_complement(seq[0:length])  # the reverse sequence of first x bp of left end
+        R[header + '_R'] = seq[-length:]  # the first x bp of right end
+        Rrc[header + '_Rrc'] = reverse_complement(seq[-length:])  # the reverse sequence of first x bp of right end
+
 log.write('A total of {0} contigs were imported.'.format(len(header2seq.keys())) + '\n')
 
 
 ##
 # get potential joins
-log_info('[02/22]', 'Getting shared contig ends.', '\n', log)
+log_info('[02/23]', 'Getting shared contig ends.', '\n', log)
 
 link_pair = {}  # used to save all overlaps between ends
 
@@ -692,7 +759,7 @@ for end in d_Rrc_d_Lrc_shared:
 
 ##
 # save all paired links to a file
-log_info('[03/22]', 'Writing contig end joining pairs.', '\n', log)
+log_info('[03/23]', 'Writing contig end joining pairs.', '\n', log)
 
 p = open('{0}/COBRA_end_joining_pairs.txt'.format(working_dir), 'w')
 one_path_end = []  # the end of contigs with one potential join
@@ -702,7 +769,7 @@ for item in link_pair.keys():
     for point in link_pair[item]:
         p.write(item + '\t' + point + '\n')  # print link pairs into a file for check if interested
 
-    if len(link_pair[item]) == 1: # and len(link_pair[link_pair[item][0]]) > 1:
+    if len(link_pair[item]) == 1:  # and len(link_pair[link_pair[item][0]]) > 1:
         one_path_end.append(item)  # add one joining end to a list, its pair may have one or more joins
     elif len(link_pair[item]) == 2 and len(link_pair[link_pair[item][0]]) == 1 and len(link_pair[link_pair[item][1]]) == 1:
         two_paths_end.append(item)  # add two joining end to a list, each of its pairs should only have one join
@@ -713,7 +780,7 @@ p.close()
 
 ##
 # read and save the coverage of all contigs
-log_info('[04/22]', 'Getting contig coverage information.', '\n', log)
+log_info('[04/23]', 'Getting contig coverage information.', '\n', log)
 cov = {}
 coverage = open('{0}'.format(args.coverage), 'r')
 for line in coverage.readlines():
@@ -730,112 +797,125 @@ else:
 
 ##
 # open the query file and save the information
-log_info('[05/22]', 'Getting query contig list. ', '', log)
-query_list = set()
+
+log_info('[05/23]', 'Getting query contig list. ', '', log)
+query_set = set()
 orphan_end_query = set()
 non_orphan_end_query = set()
 
-with open('{0}'.format(args.query), 'r') as q:
-    for record in SeqIO.parse(q, "fasta"):
-        header = str(record.id).strip()
-
-        if header in header2seq.keys():  # some queries may not in the whole assembly, should be rare though.
-            query_list.add(header)
-
-            if header + '_L' not in link_pair.keys() and header + '_R' not in link_pair.keys():
-                orphan_end_query.add(header)
+with open('{0}'.format(args.query), 'r') as query_file:
+    if determine_file_format(args.query) == 'fasta': #  if the query file is in fasta format
+        for record in SeqIO.parse(query_file, 'fasta'):
+            header = str(record.id).strip()
+            if header in header2seq.keys():  # some queries may not in the whole assembly, should be rare though.
+                query_set.add(header)
             else:
-                non_orphan_end_query.add(header)
-        else:
-            print('Query {0} is not in your whole contig fasta file, please check!'.format(header), flush=True)
+                print('Query {0} is not in your whole contig fasta file, please check!'.format(header), flush=True)
+    else: #  if the query file is in text format
+        for line in query_file:
+            header = line.strip().split(' ')[0]
+            if header in header2seq.keys():  # some queries may not in the whole assembly, should be rare though.
+                query_set.add(header)
+            else:
+                print('Query {0} is not in your whole contig fasta file, please check!'.format(header), flush=True)
 
-log.write('A total of {0} query contigs were imported.'.format(len(query_list)) + '\n')
+
+# distinguish orphan_end_query and non_orphan_end_query:
+
+for header in query_set:
+    if header + '_L' not in link_pair.keys() and header + '_R' not in link_pair.keys():
+        orphan_end_query.add(header)
+    else:
+        non_orphan_end_query.add(header)
+
+
+#
+log.write('A total of {0} query contigs were imported.'.format(len(query_set)) + '\n')
 log.flush()
 
 
 ##
 # get the linkage of contigs based on paired-end reads mapping
-log_info('[06/22]', 'Getting contig linkage based on sam/bam. Be patient, this may take long.', '\n', log)
+log_info('[06/23]', 'Getting contig linkage based on sam/bam. Be patient, this may take long.', '\n', log)
 linkage = defaultdict(set) # Initialize a defaultdict to store linked contigs
 contig_spanned_by_PE_reads = {} # Initialize a dictionary to store paired-end reads spanning contigs
-for contig in header2seq.keys():
+
+for contig in orphan_end_query:
     contig_spanned_by_PE_reads[contig] = defaultdict(list) # Create a defaultdict(list) for each contig in header2seq
 
-map_file = pysam.AlignmentFile('{0}'.format(args.mapping))
-for line in map_file:
-    if not line.is_unmapped and line.get_tag("NM") <= args.linkage_mismatch:
+with pysam.AlignmentFile('{0}'.format(args.mapping), 'rb') as map_file:
+    for line in map_file:
+        if not line.is_unmapped and line.get_tag("NM") <= args.linkage_mismatch:
         # mismatch should not be more than the defined threshold
-        if line.reference_name != line.next_reference_name:
+            if line.reference_name != line.next_reference_name:
             # Check if the read and its mate map to different contigs
-            if header2len[line.reference_name] > 1000:
+                if header2len[line.reference_name] > 1000:
                 # If the contig length is greater than 1000, determine if the read maps to the left or right end
-                if line.reference_start <= 500:
-                    linkage[line.query_name].add(line.reference_name + '_L') # left end
+                    if line.reference_start <= 500:
+                        linkage[line.query_name].add(line.reference_name + '_L') # left end
+                    else:
+                        linkage[line.query_name].add(line.reference_name + '_R') # right end
                 else:
-                    linkage[line.query_name].add(line.reference_name + '_R') # right end
-            else:
                 # If the contig length is 1000 or less, add both the left and right ends to the linkage
-                linkage[line.query_name].add(line.reference_name + '_L')
-                linkage[line.query_name].add(line.reference_name + '_R')
-        else:
+                    linkage[line.query_name].add(line.reference_name + '_L')
+                    linkage[line.query_name].add(line.reference_name + '_R')
+            else:
             # If the read and its mate map to the same contig, store the read mapped position (start)
-            contig_spanned_by_PE_reads[line.reference_name][line.query_name].append(line.reference_start)
-map_file.close()
+                if line.reference_name in orphan_end_query:
+                    if line.reference_start <= 500 or header2len[line.reference_name]-line.reference_start <= 500:
+                        contig_spanned_by_PE_reads[line.reference_name][line.query_name].append(line.reference_start)
+                    else:
+                        pass
+                else:
+                    pass
+        else:
+            pass
 
 
 #
-parsed_linkage = [] # Initialize an empty list to store the parsed linkage information
+log_info('[07/23]', 'Parsing the linkage information.', '\n', log)
+parsed_linkage = set() # Initialize an empty set to store the parsed linkage information
 for read in linkage.keys():
     if len(linkage[read]) >= 2: # Process only reads linked to at least two contigs
-        for item in linkage[read]:
-            for item, item_1 in itertools.combinations(linkage[read], 2):
-            # Generate unique pairs of linked contigs for the current read using itertools.combinations
-                if item.rsplit('_', 1)[1] != item_1.rsplit('_', 1)[1]:
-                # If the contigs have different ends (_L or _R), add the combinations to the parsed_linkage
-                    parsed_linkage.append([item, item_1])
-                    parsed_linkage.append([item_1, item])
-                    parsed_linkage.append([item + 'rc', item_1 + 'rc'])
-                    parsed_linkage.append([item_1 + 'rc', item + 'rc'])
-                else:
-                # If the contigs have the same ends, add the combinations with reverse-complement (_rc) to the parsed_linkage
-                    parsed_linkage.append([item, item_1 + 'rc'])
-                    parsed_linkage.append([item_1 + 'rc', item])
-                    parsed_linkage.append([item + 'rc', item_1])
-                    parsed_linkage.append([item_1, item + 'rc'])
+        #for item in linkage[read]:
+        for item, item_1 in itertools.combinations(linkage[read], 2):
+        # Generate unique pairs of linked contigs for the current read using itertools.combinations
+            if item.rsplit('_', 1)[1] != item_1.rsplit('_', 1)[1]:
+            # If the contigs have different ends (_L or _R), add the combinations to the parsed_linkage
+                parsed_linkage.add((item, item_1))
+                parsed_linkage.add((item_1, item))
+                parsed_linkage.add((item + 'rc', item_1 + 'rc'))
+                parsed_linkage.add((item_1 + 'rc', item + 'rc'))
+            else:
+            # If the contigs have the same ends, add the combinations with reverse-complement (_rc) to the parsed_linkage
+                parsed_linkage.add((item, item_1 + 'rc'))
+                parsed_linkage.add((item_1 + 'rc', item))
+                parsed_linkage.add((item + 'rc', item_1))
+                parsed_linkage.add((item_1, item + 'rc'))
     else:
         pass
 
+linkage = None # remove it as no longer used later
+
 
 #
-parsed_contig_spanned_by_PE_reads_count = {}
-# Initialize a dictionary to store the count of paired-end reads spanning each contig
+parsed_contig_spanned_by_PE_reads = set() # Initialize a set to store the contig spanned by paired-end reads
 for contig in orphan_end_query:
-    parsed_contig_spanned_by_PE_reads_count[contig] = 0
-    for PE in contig_spanned_by_PE_reads[contig].keys():
-        # Check if the count is 0 and the contig has exactly two paired-end reads
+    for PE in contig_spanned_by_PE_reads[contig].keys(): # Check if the count is 0 and the contig has exactly two paired-end reads
         if len(contig_spanned_by_PE_reads[contig][PE]) == 2:
             # Check if the absolute difference between the positions of the two paired-end reads is greater than or equal to
             # the length of contig minus 1000 bp
             if abs(contig_spanned_by_PE_reads[contig][PE][0] - contig_spanned_by_PE_reads[contig][PE][1]) >= header2len[contig] - 1000:
-                parsed_contig_spanned_by_PE_reads_count[contig] += 1
+                parsed_contig_spanned_by_PE_reads.add(contig)
             else:
                 pass
         else:
             pass
 
 
-parsed_contig_spanned_by_PE_reads = []
-for contig in parsed_contig_spanned_by_PE_reads_count.keys():
-    if parsed_contig_spanned_by_PE_reads_count[contig] >= 1:
-        # a contig was spanned by one or more read pairs
-        parsed_contig_spanned_by_PE_reads.append(contig)
-    else:
-        pass
-
-
 ##
 #
-log_info('[07/22]', 'Detecting self_circular contigs. ', '\n', log)
+log_info('[08/23]', 'Detecting self_circular contigs. ', '\n', log)
 self_circular = set()
 for contig in non_orphan_end_query:
     detect_self_circular(contig)
@@ -860,9 +940,12 @@ else:
 
 for contig in orphan_end_query:  # determine if there is DTR for those query with orphan ends, if yes, assign as self_circular as well
     if contig in parsed_contig_spanned_by_PE_reads:
-        if header2seq[contig].count(header2seq[contig][-min_over_len:]) == 2:
-            if header2seq[contig].endswith(header2seq[contig].split(header2seq[contig][-min_over_len:])[0] + header2seq[contig][-min_over_len:]):
-                self_circular_non_expected_overlap[contig] = len(header2seq[contig].split(header2seq[contig][-min_over_len:])[0]) + min_over_len
+        sequence = header2seq[contig]
+        end_part = sequence[-min_over_len:]
+        if sequence.count(end_part) == 2:
+            expected_end = sequence.split(end_part)[0] + end_part
+            if sequence.endswith(expected_end):
+                self_circular_non_expected_overlap[contig] = len(expected_end)
             else:
                 pass
         else:
@@ -873,17 +956,18 @@ for contig in orphan_end_query:  # determine if there is DTR for those query wit
 for contig in self_circular_non_expected_overlap.keys():
     orphan_end_query.remove(contig)
 
+
 # debug
 print(self_circular_non_expected_overlap, file=debug, flush=True)
 
 ##
 # walk the joins
-log_info('[08/22]', 'Detecting joins of contigs. ', '', log)
+log_info('[09/23]', 'Detecting joins of contigs. ', '', log)
 contig2join = {}
 contig_checked = {}
 contig2join_reason = {}
 
-for contig in query_list:
+for contig in query_set:
     contig2join[contig + '_L'] = []
     contig2join[contig + '_R'] = []
     contig_checked[contig + '_L'] = []
@@ -896,11 +980,11 @@ path_circular_end = set()
 path_circular = set()
 percentage = [10,20,30,40,50,60,70,80,90]
 finished_join_walker = 0
-total_join_walker = len(query_list) - len(orphan_end_query) - len(self_circular)
+total_join_walker = len(query_set) - len(orphan_end_query) - len(self_circular)
 
 
 #
-for contig in query_list:
+for contig in query_set:
     if contig not in list(orphan_end_query) + list(self_circular):
 
         # extend each contig from both directions
@@ -932,25 +1016,26 @@ for contig in query_list:
 ##
 # save the potential joining paths
 log.write('100% finished.' + '\n')
-log_info('[09/22]', 'Saving potential joining paths.', '\n', log)
-results = open('{0}/COBRA_potential_joining_paths.txt'.format(working_dir), 'w')
-for item in contig2join.keys():
-    if contig_name(item) in self_circular:
-        if item.endswith('_L'):
-            results.write(item + '\t' + "['" + contig_name(item) + '_R' + "']" + '\n')
-            results.flush()
+log_info('[10/23]', 'Saving potential joining paths.', '\n', log)
+
+with open('{0}/COBRA_potential_joining_paths.txt'.format(working_dir), 'w') as results:
+    for item in contig2join.keys():
+        if contig_name(item) in self_circular:
+            if item.endswith('_L'):
+                results.write(item + '\t' + "['" + contig_name(item) + '_R' + "']" + '\n')
+                results.flush()
+            else:
+                results.write(item + '\t' + "['" + contig_name(item) + '_L' + "']" + '\n')
+                results.flush()
         else:
-            results.write(item + '\t' + "['" + contig_name(item) + '_L' + "']" + '\n')
+            results.write(item + '\t' + str(contig2join[item]) + '\n')
             results.flush()
-    else:
-        results.write(item + '\t' + str(contig2join[item]) + '\n')
-        results.flush()
 
 
 ##
 # get the fail_to_join contigs, but not due to orphan end
 failed_join_list = []
-for contig in query_list:
+for contig in query_set:
     if contig + '_L' in link_pair.keys() or contig + '_R' in link_pair.keys():
         if len(contig2join[contig + '_L']) == 0 and len(contig2join[contig + '_R']) == 0 and contig not in self_circular:
             failed_join_list.append(contig)
@@ -962,7 +1047,7 @@ for contig in query_list:
 
 ##
 # get the joining paths
-log_info('[10/22]', 'Checking for invalid joining: sharing queries.', '\n', log)
+log_info('[11/23]', 'Checking for invalid joining: sharing queries.', '\n', log)
 contig2assembly = {}
 for item in contig2join.keys():
     contig = contig_name(item)
@@ -1078,7 +1163,7 @@ for contig in contig2assembly.keys():
         if contig2assembly[contig] not in same_path:
             same_path.append(contig2assembly[contig])
             for item in contig2assembly[contig]:
-                if item in query_list:
+                if item in query_set:
                     all.append(item)
                 else:
                     pass
@@ -1139,7 +1224,7 @@ print(failed_join_list, file=debug, flush=True)
 
 ##
 # determine the joining status of queries
-log_info('[11/22]', 'Getting initial joining status of each query contig.', '\n', log)
+log_info('[12/23]', 'Getting initial joining status of each query contig.', '\n', log)
 extended_circular_query = set()
 extended_partial_query = set()
 
@@ -1168,7 +1253,7 @@ print(failed_join_list, file=debug, flush=True)
 
 ##
 # deal with cross-assignment queries
-log_info('[12/22]', 'Getting final joining status of each query contig.', '\n', log)
+log_info('[13/23]', 'Getting final joining status of each query contig.', '\n', log)
 for contig in failed_join_list:
     if contig in is_subset_of.keys() and is_subset_of[contig] in extended_circular_query:
         failed_join_list.remove(contig)
@@ -1255,7 +1340,7 @@ def all_contigs_in_the_path_are_good(contig_set):
 
 ##
 # get the joining order of contigs
-log_info('[13/22]', 'Getting the joining order of contigs.', '\n', log)
+log_info('[14/23]', 'Getting the joining order of contigs.', '\n', log)
 order_all = {}
 added_to_contig = {}
 
@@ -1282,7 +1367,7 @@ for contig in contig2assembly.keys():
 
 ##
 # get retrieved sequences
-log_info('[14/22]', 'Getting retrieved contigs.', '\n', log)
+log_info('[15/23]', 'Getting retrieved contigs.', '\n', log)
 os.chdir('{0}'.format(working_dir))
 os.mkdir('COBRA_retrieved_for_joining')
 retrieved = []
@@ -1297,7 +1382,7 @@ print(retrieved, file=debug, flush=True)
 
 ##
 # writing joined sequences
-log_info('[15/22]', 'Saving joined seqeuences.', '\n', log)
+log_info('[16/23]', 'Saving joined seqeuences.', '\n', log)
 header2joined_seq = {}
 contig2extended_status = {}
 for contig in retrieved:
@@ -1366,7 +1451,7 @@ for contig in retrieved:
 
 ##
 # Similar direct terminal repeats may lead to invalid joins
-log_info('[16/22]', 'Checking for invalid joining using BLASTn: close strains.', '\n', log)
+log_info('[17/23]', 'Checking for invalid joining using BLASTn: close strains.', '\n', log)
 blastdb_1 = open('blastdb_1.fa', 'w')
 blastdb_2 = open('blastdb_2.fa', 'w')
 cobraSeq2len = {}
@@ -1485,18 +1570,18 @@ print(contig2assembly, file=debug, flush=True)
 
 ##
 # get the unique sequences of COBRA "Extended" query contigs for joining check
-log_info('[17/22]', 'Saving unique sequences of "Extended_circular" and "Extended_partial" for joining checking.', '\n', log)
+log_info('[18/23]', 'Saving unique sequences of "Extended_circular" and "Extended_partial" for joining checking.', '\n', log)
 extended_circular_fasta = open('COBRA_category_ii-a_extended_circular_unique.fasta', 'w')
 extended_partial_fasta = open('COBRA_category_ii-b_extended_partial_unique.fasta', 'w')
 query2current = {}
 
-for contig in query_list:
+for contig in query_set:
     if contig in extended_circular_query and contig not in redundant and contig not in is_same_as_redundant:
         extended_circular_fasta.write('>' + contig + '_extended_circular' + '\n')
         extended_circular_fasta.write(header2joined_seq[contig2extended_status[contig]] + '\n')
         extended_circular_fasta.flush()
         for item in order_all[contig]:
-            if contig_name(item) in query_list:
+            if contig_name(item) in query_set:
                 query2current[contig_name(item)] = contig + '_extended_circular'
             else:
                 pass
@@ -1505,7 +1590,7 @@ for contig in query_list:
         extended_partial_fasta.write(header2joined_seq[contig2extended_status[contig]] + '\n')
         extended_partial_fasta.flush()
         for item in order_all[contig]:
-            if contig_name(item) in query_list:
+            if contig_name(item) in query_set:
                 if contig_name(item) in extended_partial_query:
                     query2current[contig_name(item)] = contig + '_extended_partial'
                 elif contig_name(item) in failed_join_list:
@@ -1528,7 +1613,7 @@ debug.close()
 
 ##
 # save the joining details information
-log_info('[18/22]', 'Getting the joining details of unique "Extended_circular" and "Extended_partial" query contigs.', '\n', log)
+log_info('[19/23]', 'Getting the joining details of unique "Extended_circular" and "Extended_partial" query contigs.', '\n', log)
 joining_detail_headers = ['Final_Seq_ID', 'Joined_Len', 'Status', 'Joined_Seq_ID', 'Direction', 'Joined_Seq_Len',
                           'Start', 'End', 'Joined_Seq_Cov', 'Joined_Seq_GC', 'Joined_reason']
 extended_circular_joininig_details = open('COBRA_category_ii-a_extended_circular_unique_joining_details.txt', 'w')
@@ -1616,7 +1701,7 @@ extended_partial_joininig_details.close()
 
 ##
 # save the joining summary information
-log_info('[19/22]', 'Saving joining summary of "Extended_circular" and "Extended_partial" query contigs.', '\n', log)
+log_info('[20/23]', 'Saving joining summary of "Extended_circular" and "Extended_partial" query contigs.', '\n', log)
 assembly_summary = open('COBRA_joining_summary.txt', 'w')
 assembly_summary_headers = ['Query_Seq_ID', 'Query_Seq_Len', 'Total_Joined_Seqs', 'Joined_seqs', 'Total_Joined_Len',
                             'Assembled_Len', 'Extended_Len', 'Status', 'Final_Seq_ID']
@@ -1639,7 +1724,7 @@ assembly_summary.close()
 
 ##
 # save the joining status information of each query
-log_info('[20/22]', 'Saving joining status of all query contigs.', '\n', log)
+log_info('[21/23]', 'Saving joining status of all query contigs.', '\n', log)
 assembled_info = open('COBRA_joining_status.txt', 'w')  # shows the COBRA status of each query
 assembled_info.write('SeqID' + '\t' + 'Length' + '\t' + 'Coverage' + '\t' + 'GC' + '\t' + 'Status' + '\t' + 'Category' + '\n')
 
@@ -1677,7 +1762,7 @@ orphan_end.close()
 summary_fasta('COBRA_category_iii_orphan_end.fasta')
 
 # for self circular
-log_info('[21/22]', 'Saving self_circular contigs.', '\n', log)
+log_info('[22/23]', 'Saving self_circular contigs.', '\n', log)
 circular_fasta = open('COBRA_category_i_self_circular.fasta', 'w')
 
 for contig in self_circular:
@@ -1700,7 +1785,7 @@ summary_fasta('COBRA_category_i_self_circular.fasta')
 
 ##
 # save new fasta file with all the others used in joining replaced by COBRA sequences excepting self_circular ones
-log_info('[22/22]', 'Saving the new fasta file.', '\n', log)
+log_info('[23/23]', 'Saving the new fasta file.', '\n', log)
 
 for contig in all_joined_query:
     del header2seq[contig]
@@ -1708,10 +1793,10 @@ for contig in all_joined_query:
 with open('{0}.new.fa'.format(fasta_name.rsplit('.',1)[0]), 'w') as new:
     for header, sequence in header2seq.items():
         new.write(f">{header}\n{sequence}\n")
-        new.flush()
 
 os.system('cat {0}.new.fa COBRA_category_ii-a_extended_circular_unique.fasta '
-          'COBRA_category_ii-b_extended_partial_unique.fasta >{0}.new.fa.'.format(fasta_name.rsplit('.',1)[0]))
+          'COBRA_category_ii-b_extended_partial_unique.fasta '
+          '>{0}.new.fa.'.format(fasta_name.rsplit('.',1)[0]))
 os.system('mv {0}.new.fa. {0}.new.fa'.format(fasta_name.rsplit('.',1)[0]))
 
 
@@ -1727,7 +1812,7 @@ os.system('mv blastdb_1.fa* blastdb_2.fa blastdb_2.vs.blastdb_1* intermediate.fi
 # write the numbers to the log file
 log.write('\n')
 log.write('3. RESULTS SUMMARY' + '\n')
-log.write('# Total queries: ' + str(len(query_list)) + '\n' +
+log.write('# Total queries: ' + str(len(query_set)) + '\n' +
           '# Category i   - Self_circular: ' + str(count_seq('COBRA_category_i_self_circular.fasta')) + '\n' +
           '# Category ii  - Extended_circular: ' + str(len(extended_circular_query)) + ' (Unique: ' +
           str(count_seq('COBRA_category_ii-a_extended_circular_unique.fasta')) + ')\n' +
