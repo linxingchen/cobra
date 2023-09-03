@@ -26,7 +26,9 @@ Figure 2. The "expected overlap length" has been documented in manual genome cur
 
 COBRA determines the "expected overlap length" (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired-end reads mapping) (Figure 3).
 
-Note that scaffolds (for example, metaSPAdes assembly) could be used as input for COBRA extension, however, we suggest not using scaffolds from IDBA_UD as the potential errors in the scaffolding step (see [Chen et al. 2020](https://genome.cshlp.org/content/30/3/315.short) for details). Thus, for IDBA_UD and MEGAHIT assembly, the contigs should be used.
+Note that scaffolds (for example, metaSPAdes assembly) could be used as input for COBRA extension, however, we suggest not using scaffolds from IDBA_UD as the potential errors in the scaffolding step (see [Chen et al. 2020](https://genome.cshlp.org/content/30/3/315.short) for details). Thus, for IDBA_UD and MEGAHIT assembly, the contigs should be used. 
+
+Given that COBRA has only tested for contigs/scaffolds from IDBA_UD, metaSPAdes and MEGAHIT, it will be risky to use it on contigs/scaffolds from any other assemblers.
 
 ![Figure 1](https://github.com/linxingchen/cobra.github.io/assets/46725273/b4dfe26a-794a-4384-9c15-12762b5e7e10)
 
