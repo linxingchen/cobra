@@ -1,6 +1,8 @@
 # COBRA
 COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher quality viral genomes assembled from metagenomes of short paired-end reads. COBRA was written in Python. COBRA has so far only been tested on assembled contigs from metaSPAdes, IDBA_UD, and MEGAHIT.
 
+** current version = v1.2.1 **
+
 ## Introduction
 
 **1. Why metagenomic contigs are fragmented?**
@@ -35,7 +37,7 @@ Given that COBRA has only tested for contigs/scaffolds from IDBA_UD, metaSPAdes 
 Figure 3. The workflow of COBRA.
 
 ##
-## Installation
+## Dependencies
 COBRA is a Python script (tested for version 3.7 or higher) that uses a list of frequently used Python packages including:
 ```
 Bio
@@ -47,7 +49,26 @@ pysam
 time
 ```
 
-Once these packages are available, the only third-party software that the user should have is [BLASTn](https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download).
+The only third-party software that COBRA will use is [BLASTn](https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download).
+
+## Installation
+* COBRA could now be installed via pip
+
+```pip install cobra-meta```
+
+Confirm the installment using 
+
+```cobra-meta -h```
+
+which shows your something like this
+
+```
+usage: cobra-meta [-h] -q QUERY -f FASTA -a {idba,megahit,metaspades} -mink MINK -maxk MAXK -m MAPPING -c COVERAGE [-lm LINKAGE_MISMATCH] [-o OUTPUT] [-t THREADS] [-v]
+
+This script is used to get higher quality (including circular) virus genomes by joining assembled contigs based on their end overlaps.
+
+...
+```
 
 ##
 ## Input files
