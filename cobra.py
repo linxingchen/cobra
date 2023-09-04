@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # Author: LinXing Chen, UC Berkeley
 
-# COBRA v1.2.1
+# cobra v1.2.2
 # Contig Overlap Based Re-Assembly
 # Modification date: Sep 3, 2023
 
@@ -35,7 +35,7 @@ parser.add_argument("-lm", "--linkage_mismatch", type=int, default=2, help="the 
                                                                            "paired reads. [2]")
 parser.add_argument("-o", "--output", type=str, help="the name of output folder (default = '<query>_COBRA').")
 parser.add_argument("-t", "--threads", type=int, default=16, help="the number of threads for blastn. [16]")
-parser.add_argument("-v", "--version", action='version', version='cobra v1.2.1')
+parser.add_argument("-v", "--version", action='version', version='cobra v1.2.2')
 args = parser.parse_args()
 
 ##
