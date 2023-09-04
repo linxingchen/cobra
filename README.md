@@ -38,7 +38,7 @@ Figure 3. The workflow of COBRA.
 
 ##
 ## Dependencies
-COBRA is a Python script (tested for version 3.7 or higher) that uses a list of frequently used Python packages including:
+* COBRA is a Python script (tested for version 3.7 or higher) that uses a list of frequently used Python packages including:
 ```
 Bio
 Bio.Seq
@@ -49,14 +49,25 @@ pysam
 time
 ```
 
-The only third-party software that COBRA will use is [BLASTn](https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download).
+* The only third-party software that COBRA will use is [BLASTn](https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download).
 
 ## Installation
-* COBRA could now be installed via pip
+COBRA could now be installed via different ways.
+
+* (1) git
+
+```git clone https://github.com/linxingchen/cobra.git```
+
+```cd cobra```
+
+```python cobra.py -h```
+
+
+* (2) pip
 
 ```pip install cobra-meta```
 
-Confirm the installment using 
+To confirm the installment,
 
 ```cobra-meta -h```
 
