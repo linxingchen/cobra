@@ -81,6 +81,9 @@ This script is used to get higher quality (including circular) virus genomes by 
 ...
 ```
 
+* (3) conda
+```conda create -n cobra python=3.8```
+
 ##
 ## Input files
 (1) COBRA needs four files as inputs, i.e., 
