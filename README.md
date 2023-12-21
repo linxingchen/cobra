@@ -32,7 +32,7 @@ Note that scaffolds (for example, metaSPAdes assembly) could be used as input fo
 
 Given that COBRA has only tested for contigs/scaffolds from IDBA_UD, metaSPAdes and MEGAHIT, it will be risky to use it on contigs/scaffolds from any other assemblers.
 
-![Figure 1](https://github.com/linxingchen/cobra.github.io/assets/46725273/b4dfe26a-794a-4384-9c15-12762b5e7e10)
+![Figure 1](https://github.com/linxingchen/cobra/assets/46725273/77a8285b-cce8-45f3-8e4e-4c46c3f45354)
 
 Figure 3. The workflow of COBRA.
 
