@@ -3,6 +3,9 @@ COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher 
 
 ** current version = v1.2.2 **
 
+# Notes
+1. Biopython (added on Jan 1st, 2024): The new version of BioPython (1.82) has somehow removed the GC function (for GC content calculation) that COBRA needs, if you meet this issue, try to install an old version of Biopython (version 1.81 works).
+
 ## Introduction
 
 **1. Why metagenomic contigs are fragmented?**
