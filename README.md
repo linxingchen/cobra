@@ -1,3 +1,6 @@
+![logo](https://github.com/linxingchen/cobra/assets/46725273/6328e3c1-fcb9-49fa-8316-f2fe6c512909)
+
+
 # COBRA
 COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher quality viral genomes assembled from metagenomes of short paired-end reads. COBRA was written in Python. COBRA has so far only been tested on assembled contigs from metaSPAdes, IDBA_UD, and MEGAHIT.
 
