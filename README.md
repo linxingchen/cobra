@@ -303,7 +303,7 @@ contig-140_188  38386   5       48986   48291   9905    Extended_circular
 
 ##
 ## Citation
-The preprint is available at bioRxiv (doi: https://doi.org/10.1101/2023.05.30.542503), which has been accepted by Nature Microbiology and in press now. Please cite if you find it helpful for your analyses.
+The paper is out at Nature Microbiology (https://www.nature.com/articles/s41564-023-01598-2). Please cite if you find it helpful for your analyses.
 
 ##
 ## Questions
