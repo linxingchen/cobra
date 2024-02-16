@@ -10,11 +10,16 @@ import os
 from Bio import SeqIO
 from Bio.Seq import reverse_complement
 from collections import defaultdict
-from Bio.SeqUtils import GC
 import argparse
 import pysam
 from time import strftime
 import itertools
+
+bio_version = Bio.__version__
+if bio_version > '1.79':
+    from Bio.SeqUtils import gc_fraction as GC
+else:
+    from Bio.SeqUtils import GC
 
 
 parser = argparse.ArgumentParser(description="This script is used to get higher quality (including circular) virus genomes "
