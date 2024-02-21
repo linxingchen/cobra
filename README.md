@@ -3,10 +3,12 @@
 # COBRA
 COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher quality viral genomes assembled from metagenomes of short paired-end reads. COBRA was written in Python. COBRA has so far only been tested on assembled contigs from metaSPAdes, IDBA_UD, and MEGAHIT.
 
-** current version = v1.2.2 **
+** current version = v1.2.3 **
 
-# Notes
-1. Biopython (added on Jan 1st, 2024): The new version of BioPython (since 1.80) has somehow removed the GC function (for GC content calculation) that COBRA needs, if you meet this issue, try to install an old version of Biopython (version 1.79 works).
+# Bugs fixed in version v1.2.3
+1. The GC function issue due to the update of Biopython has now been fixed in v1.2.3.
+2. The issue of abnormal exit in the middle of processing some samples has been fixed in v1.2.3.
+3. If none of the queries was extended, the process will abnormally exit, which is now been fixed as well.
 
 ## Introduction
 
