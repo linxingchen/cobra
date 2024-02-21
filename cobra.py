@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # Author: LinXing Chen, UC Berkeley
 
-# cobra v1.2.2
+# cobra v1.2.3
 # Contig Overlap Based Re-Assembly
 # Modification date: Sep 3, 2023
 
@@ -41,7 +41,7 @@ parser.add_argument("-lm", "--linkage_mismatch", type=int, default=2, help="the 
                                                                            "paired reads. [2]")
 parser.add_argument("-o", "--output", type=str, help="the name of output folder (default = '<query>_COBRA').")
 parser.add_argument("-t", "--threads", type=int, default=16, help="the number of threads for blastn. [16]")
-parser.add_argument("-v", "--version", action='version', version='cobra v1.2.2')
+parser.add_argument("-v", "--version", action='version', version='cobra v1.2.3')
 args = parser.parse_args()
 
 ##
@@ -235,11 +235,8 @@ def other_end_is_extendable(end, contig):
     check if the other end is extendable
     """
     if contig_name(end) not in self_circular:
-        if 0.5 * cov[contig] <= cov[contig_name(end)] <= 2 * cov[contig]:
-            if get_target(end) in link_pair.keys():
-                return len(link_pair[get_target(end)]) > 0
-            else:
-                return False
+        if get_target(end) in link_pair.keys():
+            return len(link_pair[get_target(end)]) > 0
         else:
             return False
     else:
@@ -1527,10 +1524,15 @@ def main():
     blastdb_1.close()
     blastdb_2.close()
 
-    # make blastn database and run search
-    os.system('makeblastdb -in blastdb_1.fa -dbtype nucl')
-    os.system('blastn -task blastn -db blastdb_1.fa -query blastdb_2.fa -out blastdb_2.vs.blastdb_1 -evalue 1e-10 '
-              '-outfmt 6 -perc_identity 70 -num_threads {0}'.format(args.threads))
+    
+    # make blastn database and run search if the database is not empty
+    if os.path.getsize('blastdb_1.fa') == 0:
+        print('no query was extended, exit! this is normal if you only provide few queries.', file=log, flush=True)
+        exit()
+    else:
+        os.system('makeblastdb -in blastdb_1.fa -dbtype nucl')
+        os.system('blastn -task blastn -db blastdb_1.fa -query blastdb_2.fa -out blastdb_2.vs.blastdb_1 -evalue 1e-10 '
+                  '-outfmt 6 -perc_identity 70 -num_threads {0}'.format(args.threads))
 
     # parse the blastn results
     contig2TotLen = {}
