@@ -8,7 +8,7 @@ COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher 
 # Bugs fixed in version v1.2.3
 1. The GC function issue due to the update of Biopython has now been fixed in v1.2.3.
 2. The issue of abnormal exit in the middle of processing some samples has been fixed in v1.2.3.
-3. If none of the queries was extended, the process will abnormally exit, which is now been fixed as well.
+3. If none of the queries was extended, the process will abnormally exit, which has been fixed as well.
 
 ## Introduction
 
