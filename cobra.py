@@ -7,6 +7,7 @@
 
 
 import os
+import Bio
 from Bio import SeqIO
 from Bio.Seq import reverse_complement
 from collections import defaultdict
