@@ -22,7 +22,6 @@ if bio_version > '1.79':
 else:
     from Bio.SeqUtils import GC
 
-
 parser = argparse.ArgumentParser(description="This script is used to get higher quality (including circular) virus genomes "
                                              "by joining assembled contigs based on their end overlaps.")
 requiredNamed = parser.add_argument_group('required named arguments')
@@ -52,13 +51,13 @@ global one_path_end, link_pair, cov, parsed_linkage, self_circular, two_paths_en
     header2len, is_subset_of
 
 #
-cov = {} # the coverage of contigs
+cov = {}  # the coverage of contigs
 header2seq = {}
 header2len = {}
 link_pair = {}  # used to save all overlaps between ends
 parsed_linkage = set()  # Initialize an empty set to store the parsed linkage information
 one_path_end = []  # the end of contigs with one potential join
-two_paths_end = [] # the end of contigs with two potential joins
+two_paths_end = []  # the end of contigs with two potential joins
 self_circular = set()
 self_circular_non_expected_overlap = {}
 contig2join = {}
@@ -77,7 +76,7 @@ all_joined_query = set()
 ##
 # define functions for analyses
 def log_info(step, description, line_feed, log_file):
-    localtime = ' [20' + strftime("%x").rsplit('/',1)[1] + '/' + strftime("%x").rsplit('/',1)[0] + ' ' + strftime("%X") + '] '
+    localtime = ' [20' + strftime("%x").rsplit('/', 1)[1] + '/' + strftime("%x").rsplit('/', 1)[0] + ' ' + strftime("%X") + '] '
     print(step + localtime + description, end=line_feed, file=log_file, flush=True)
 
 
@@ -382,7 +381,7 @@ def join_walker(contig, direction):
                                     contig_checked[end].append(contig_name((link_pair[target][1])))
                                     contig2join_reason[contig][contig_name(the_better_one(link_pair[target], contig))] = 'the_better_one'
                                 else:
-                                     pass
+                                    pass
                             else:
                                 pass
                     else:
@@ -683,8 +682,8 @@ def main():
     ##
     # import the whole contigs and save their end sequences
     log_info('[01/23]', 'Reading contigs and getting the contig end sequences. ', '', log)
-    #header2seq = {}
-    #header2len = {}
+    # header2seq = {}
+    # header2len = {}
     gc = {}
     L = {}
     R = {}
@@ -709,7 +708,7 @@ def main():
     # get potential joins
     log_info('[02/23]', 'Getting shared contig ends.', '\n', log)
 
-    #link_pair = {}  # used to save all overlaps between ends
+    # link_pair = {}  # used to save all overlaps between ends
 
     d_L = defaultdict(set)
     d_Lrc = defaultdict(set)
@@ -795,8 +794,6 @@ def main():
     log_info('[03/23]', 'Writing contig end joining pairs.', '\n', log)
 
     p = open('{0}/COBRA_end_joining_pairs.txt'.format(working_dir), 'w')
-    #one_path_end = []  # the end of contigs with one potential join
-    #two_paths_end = []  # the end of contigs with two potential joins
 
     for item in link_pair.keys():
         for point in link_pair[item]:
@@ -814,7 +811,6 @@ def main():
     ##
     # read and save the coverage of all contigs
     log_info('[04/23]', 'Getting contig coverage information.', '\n', log)
-    #cov = {}
     coverage = open('{0}'.format(args.coverage), 'r')
     for line in coverage.readlines():
         line = line.strip().split('\t')
@@ -903,7 +899,7 @@ def main():
 
     #
     log_info('[07/23]', 'Parsing the linkage information.', '\n', log)
-    #parsed_linkage = set()  # Initialize an empty set to store the parsed linkage information
+
     for read in linkage.keys():
         if len(linkage[read]) >= 2:  # Process only reads linked to at least two contigs
             # for item in linkage[read]:
@@ -929,8 +925,7 @@ def main():
     #
     parsed_contig_spanned_by_PE_reads = set()  # Initialize a set to store the contig spanned by paired-end reads
     for contig in orphan_end_query:
-        for PE in contig_spanned_by_PE_reads[
-            contig].keys():  # Check if the count is 0 and the contig has exactly two paired-end reads
+        for PE in contig_spanned_by_PE_reads[contig].keys():  # Check if the count is 0 and the contig has exactly two paired-end reads
             if len(contig_spanned_by_PE_reads[contig][PE]) == 2:
                 # Check if the absolute difference between the positions of the two paired-end reads is greater than or equal to
                 # the length of contig minus 1000 bp
@@ -945,7 +940,7 @@ def main():
     ##
     #
     log_info('[08/23]', 'Detecting self_circular contigs. ', '\n', log)
-    #self_circular = set()
+
     for contig in non_orphan_end_query:
         detect_self_circular(contig)
 
@@ -957,7 +952,6 @@ def main():
 
     # orphan end queries info
     # determine potential self_circular contigs from contigs with orphan end
-    #self_circular_non_expected_overlap = {}
 
     min_over_len = 0
     if args.assembler == 'idba':
@@ -989,9 +983,6 @@ def main():
     ##
     # walk the joins
     log_info('[09/23]', 'Detecting joins of contigs. ', '', log)
-    #contig2join = {}
-    #contig_checked = {}
-    #contig2join_reason = {}
 
     for contig in query_set:
         contig2join[contig + '_L'] = []
@@ -1001,8 +992,6 @@ def main():
         contig2join_reason[contig] = {}
         contig2join_reason[contig][contig] = 'query'
 
-    #path_circular_end = set()
-    #path_circular = set()
     percentage = [10, 20, 30, 40, 50, 60, 70, 80, 90]
     finished_join_walker = 0
     total_join_walker = len(query_set) - len(orphan_end_query) - len(self_circular)
@@ -1059,9 +1048,10 @@ def main():
     failed_join_list = []
     for contig in query_set:
         if contig + '_L' in link_pair.keys() or contig + '_R' in link_pair.keys():
-            if len(contig2join[contig + '_L']) == 0 and len(
-                    contig2join[contig + '_R']) == 0 and contig not in self_circular:
+            if len(contig2join[contig + '_L']) == 0 and len(contig2join[contig + '_R']) == 0 \
+                    and contig not in self_circular:
                 failed_join_list.append(contig)
+                print(contig, len(contig2join[contig + '_L']), len(contig2join[contig + '_R']), contig not in self_circular)
             else:
                 pass
         else:
@@ -1112,7 +1102,6 @@ def main():
     ##
     # find the redundant joining paths
     redundant = set()
-    #is_subset_of = {}
     is_same_as = {}
     for contig in contig2assembly.keys():
         for contig_1 in contig2assembly.keys():
@@ -1246,8 +1235,6 @@ def main():
     ##
     # determine the joining status of queries
     log_info('[12/23]', 'Getting initial joining status of each query contig.', '\n', log)
-    #extended_circular_query = set()
-    #extended_partial_query = set()
 
     for contig in contig2assembly.keys():
         if contig not in failed_join_list:
@@ -1359,8 +1346,8 @@ def main():
     ##
     # get the joining order of contigs
     log_info('[14/23]', 'Getting the joining order of contigs.', '\n', log)
-    #order_all = {}
-    #added_to_contig = {}
+    # order_all = {}
+    # added_to_contig = {}
 
     for contig in contig2assembly.keys():
         # only those contigs left in contig2assembly after filtering
@@ -1469,6 +1456,11 @@ def main():
 
         a.close()
 
+    print('contig2extended_status', file=debug, flush=True)
+    print(contig2extended_status, file=debug, flush=True)
+    print('header2joined_seq', file=debug, flush=True)
+    print(header2joined_seq.keys(), file=debug, flush=True)
+
     ##
     # Similar direct terminal repeats may lead to invalid joins
     log_info('[17/23]', 'Checking for invalid joining using BLASTn: close strains.', '\n', log)
@@ -1524,7 +1516,6 @@ def main():
     blastdb_1.close()
     blastdb_2.close()
 
-    
     # make blastn database and run search if the database is not empty
     if os.path.getsize('blastdb_1.fa') == 0:
         print('no query was extended, exit! this is normal if you only provide few queries.', file=log, flush=True)
@@ -1643,19 +1634,15 @@ def main():
              log)
     joining_detail_headers = ['Final_Seq_ID', 'Joined_Len', 'Status', 'Joined_Seq_ID', 'Direction', 'Joined_Seq_Len',
                               'Start', 'End', 'Joined_Seq_Cov', 'Joined_Seq_GC', 'Joined_reason']
-    extended_circular_joininig_details = open('COBRA_category_ii-a_extended_circular_unique_joining_details.txt', 'w')
-    extended_circular_joininig_details.write('\t'.join(joining_detail_headers[:]) + '\n')
-    extended_partial_joininig_details = open('COBRA_category_ii-b_extended_partial_unique_joining_details.txt', 'w')
-    extended_partial_joininig_details.write('\t'.join(joining_detail_headers[:]) + '\n')
+    extended_circular_joining_details = open('COBRA_category_ii-a_extended_circular_unique_joining_details.txt', 'w')
+    extended_circular_joining_details.write('\t'.join(joining_detail_headers[:]) + '\n')
+    extended_partial_joining_details = open('COBRA_category_ii-b_extended_partial_unique_joining_details.txt', 'w')
+    extended_partial_joining_details.write('\t'.join(joining_detail_headers[:]) + '\n')
     contig2join_details = {}
-    position_to_check = {}  # for confirmation of joins later
 
     for contig in order_all.keys():
         site = 1
         if contig in path_circular and contig not in redundant and contig not in is_same_as_redundant and contig not in failed_join_list:
-            position_to_check[contig + '_extended_circular'] = {}
-            position_to_check[contig + '_extended_circular'][1] = header2joined_seq[contig + '_extended_circular'][
-                                                                  0:length]
             contig2join_details[contig + '_extended_circular'] = []
             for item in order_all[contig][:-1]:
                 if get_direction(item) == 'forward':
@@ -1667,9 +1654,6 @@ def main():
                                 contig2join_reason[contig][contig_name(item)]]
                     contig2join_details[contig + '_extended_circular'].append('\t'.join(contents[:]))
                     site += header2len[contig_name(item)] - length
-                    position_to_check[contig + '_extended_circular'][site] = header2joined_seq[
-                                                                                 contig + '_extended_circular'][
-                                                                             site - 1:site + length - 1]
                 else:
                     contents = [contig + '_extended_circular',
                                 str(total_length(order_all[contig]) - length * (len(order_all[contig]) - 1)),
@@ -1679,31 +1663,26 @@ def main():
                                 contig2join_reason[contig][contig_name(item)]]
                     contig2join_details[contig + '_extended_circular'].append('\t'.join(contents[:]))
                     site += header2len[contig_name(item)] - length
-                    position_to_check[contig + '_extended_circular'][site] = header2joined_seq[
-                                                                                 contig + '_extended_circular'][
-                                                                             site - 1:site + length - 1]
 
             last = order_all[contig][-1]
             if get_direction(last) == 'forward':
                 contents = [contig + '_extended_circular',
-                            str(total_length(order_all[contig]) - length * len(order_all[contig]) - 1),
+                            str(total_length(order_all[contig]) - length * (len(order_all[contig]) - 1)),
                             'Circular', contig_name(last), 'forward', str(header2len[contig_name(last)]), str(site),
                             str(site + header2len[contig_name(last)] - 1),  # length - 1),
                             str(cov[contig_name(last)]), str(gc[contig_name(last)]),
                             contig2join_reason[contig][contig_name(last)], '\n']
                 contig2join_details[contig + '_extended_circular'].append('\t'.join(contents[:]))
-                position_to_check[contig + '_extended_circular'][1] = header2joined_seq[contig + '_extended_circular'][
-                                                                      0:length]
+
             else:
                 contents = [contig + '_extended_circular',
-                            str(total_length(order_all[contig]) - length * len(order_all[contig]) - 1),
+                            str(total_length(order_all[contig]) - length * (len(order_all[contig]) - 1)),
                             'Circular', contig_name(last) + '_rc', 'reverse', str(header2len[contig_name(last)]),
                             str(site + header2len[contig_name(last)] - 1),  # - length - 1),
                             str(site), str(cov[contig_name(last)]), str(gc[contig_name(last)]),
                             contig2join_reason[contig][contig_name(last)], '\n']
                 contig2join_details[contig + '_extended_circular'].append('\t'.join(contents[:]))
         elif contig in extended_partial_query and contig not in redundant and contig not in is_same_as_redundant:
-            position_to_check[contig + '_extended_partial'] = {}
             contig2join_details[contig + '_extended_partial'] = []
             for item in order_all[contig][:-1]:
                 if get_direction(item) == 'forward':
@@ -1715,9 +1694,6 @@ def main():
                                 contig2join_reason[contig][contig_name(item)]]
                     contig2join_details[contig + '_extended_partial'].append('\t'.join(contents[:]))
                     site += header2len[contig_name(item)] - length
-                    position_to_check[contig + '_extended_partial'][site] = header2joined_seq[
-                                                                                contig + '_extended_partial'][
-                                                                            site - 1:site + length - 1]
                 else:
                     contents = [contig + '_extended_partial',
                                 str(total_length(order_all[contig]) - length * (len(order_all[contig]) - 1)),
@@ -1727,9 +1703,6 @@ def main():
                                 contig2join_reason[contig][contig_name(item)]]
                     contig2join_details[contig + '_extended_partial'].append('\t'.join(contents[:]))
                     site += header2len[contig_name(item)] - length
-                    position_to_check[contig + '_extended_partial'][site] = header2joined_seq[
-                                                                                contig + '_extended_partial'][
-                                                                            site - 1:site + length - 1]
 
             last = order_all[contig][-1]  # for the last one in non-circular path, the end position should be different
             if get_direction(last) == 'forward':
@@ -1753,11 +1726,11 @@ def main():
 
     for seq in contig2join_details.keys():
         if 'circular' in seq:
-            extended_circular_joininig_details.write('\n'.join(contig2join_details[seq][:]))
+            extended_circular_joining_details.write('\n'.join(contig2join_details[seq][:]))
         else:
-            extended_partial_joininig_details.write('\n'.join(contig2join_details[seq][:]))
-    extended_circular_joininig_details.close()
-    extended_partial_joininig_details.close()
+            extended_partial_joining_details.write('\n'.join(contig2join_details[seq][:]))
+    extended_circular_joining_details.close()
+    extended_partial_joining_details.close()
 
     ##
     # save the joining summary information
@@ -1767,7 +1740,7 @@ def main():
     assembly_summary_headers = ['Query_Seq_ID', 'Query_Seq_Len', 'Total_Joined_Seqs', 'Joined_seqs', 'Total_Joined_Len',
                                 'Assembled_Len', 'Extended_Len', 'Status', 'Final_Seq_ID']
     assembly_summary.write('\t'.join(assembly_summary_headers[:]) + '\n')
-    #all_joined_query = set()
+
     for contig in list(extended_circular_query) + list(extended_partial_query):
         if contig in query2current.keys():
             assembly_summary.write(
@@ -1890,6 +1863,6 @@ def main():
     log.flush()
     log.close()
 
+
 if __name__ == '__main__':
     main()
-
