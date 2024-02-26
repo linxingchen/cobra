@@ -83,8 +83,6 @@ which shows your something like this
 ```
 usage: cobra-meta [-h] -q QUERY -f FASTA -a {idba,megahit,metaspades} -mink MINK -maxk MAXK -m MAPPING -c COVERAGE [-lm LINKAGE_MISMATCH] [-o OUTPUT] [-t THREADS] [-v]
 
-This script is used to get higher quality (including circular) virus genomes by joining assembled contigs based on their end overlaps.
-
 ...
 ```
 
@@ -97,6 +95,18 @@ This script is used to get higher quality (including circular) virus genomes by 
 ```conda install bioconda::cobra-meta``` (v1.2.2)
 
 ```conda install linxingchen1987::cobra-meta``` (v1.2.3)
+
+To confirm the installment,
+
+```cobra-meta -h```
+
+which shows your something like this
+
+```
+usage: cobra-meta [-h] -q QUERY -f FASTA -a {idba,megahit,metaspades} -mink MINK -maxk MAXK -m MAPPING -c COVERAGE [-lm LINKAGE_MISMATCH] [-o OUTPUT] [-t THREADS] [-v]
+
+...
+```
 
 ## Update
 * pip
