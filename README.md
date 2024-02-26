@@ -92,9 +92,7 @@ usage: cobra-meta [-h] -q QUERY -f FASTA -a {idba,megahit,metaspades} -mink MINK
 
 ```conda activate cobra```
 
-```conda install bioconda::cobra-meta``` (v1.2.2)
-
-```conda install linxingchen1987::cobra-meta``` (v1.2.3)
+```conda install bioconda::cobra-meta``` or ```conda install linxingchen1987::cobra-meta```
 
 To confirm the installment,
 
@@ -112,6 +110,12 @@ usage: cobra-meta [-h] -q QUERY -f FASTA -a {idba,megahit,metaspades} -mink MINK
 * pip
   
 ```pip install --upgrade cobra-meta```
+
+* conda
+
+``` conda activate cobra``` (if cobra is the conda environment name)
+
+``` conda update cobra-meta```
 
 ##
 ## Input files
