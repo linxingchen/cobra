@@ -94,7 +94,7 @@ This script is used to get higher quality (including circular) virus genomes by 
 
 ```conda activate cobra```
 
-```conda install cobra-meta``` (v1.2.2)
+```conda install bioconda::cobra-meta``` (v1.2.2)
 
 ```conda install linxingchen1987::cobra-meta``` (v1.2.3)
 
