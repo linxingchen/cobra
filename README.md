@@ -96,6 +96,10 @@ This script is used to get higher quality (including circular) virus genomes by 
 
 ```conda install cobra-meta```
 
+## Update
+* pip
+  
+```pip install --upgrade cobra-meta```
 
 ##
 ## Input files
