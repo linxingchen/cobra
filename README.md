@@ -1,14 +1,26 @@
 ![COBRA_logo](https://github.com/linxingchen/cobra/assets/46725273/f21d1198-991c-42b2-9ec0-0ae8a662ba35)
 
-# COBRA
 COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher quality viral genomes assembled from metagenomes of short paired-end reads. COBRA was written in Python. COBRA has so far only been tested on assembled contigs from metaSPAdes, IDBA_UD, and MEGAHIT.
 
-** current version = v1.2.3 **
+```
+# Developed by Dr. LinXing Chen
+# University of California, Berkeley
+# The Banfield Lab
+# Email: linkingchan@gmail.com
+```
 
-## Bugs fixed in version v1.2.3
+## Versions
+v1.2.3 (released on 2024-02-26)
+```
 1. The GC function issue due to the update of Biopython.
 2. The abnormal exit in the middle of processing some samples.
-3. If none of the queries was extended, the process will break. If your run does not have the expected output files, see the log file.
+3. If none of the queries was extended, the process will break. If your runs
+do not have the expected output files, see the log file.
+```
+
+## Citation
+The paper is out at Nature Microbiology (https://www.nature.com/articles/s41564-023-01598-2). Please cite if you find it helpful for your analyses.
+
 
 ## Introduction
 
@@ -30,7 +42,7 @@ According to the principles of the abovementioned assemblers, the broken contigs
 
 Figure 2. The "expected overlap length" has been documented in manual genome curation, see [Chen et al. 2020](https://genome.cshlp.org/content/30/3/315.short) for details.
 
-##
+
 ## How COBRA works
 
 COBRA determines the "expected overlap length" (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired-end reads mapping) (Figure 3).
@@ -43,7 +55,7 @@ Given that COBRA has only tested for contigs/scaffolds from IDBA_UD, metaSPAdes 
 
 Figure 3. The workflow of COBRA.
 
-##
+
 ## Dependencies
 * COBRA is a Python script (tested for version 3.7 or higher) that uses a list of frequently used Python packages including:
 ```
@@ -117,7 +129,7 @@ usage: cobra-meta [-h] -q QUERY -f FASTA -a {idba,megahit,metaspades} -mink MINK
 
 ``` conda update cobra-meta```
 
-##
+
 ## Input files
 (1) COBRA needs four files as inputs, i.e., 
 
@@ -148,7 +160,7 @@ contig-140_4    41.2746
 * ```-o/--output```: the name of the output folder, otherwise it will be "{```-q/--query```}.COBRA" if not provided.
 * ```-t/--threads```: the number of threads used for BLASTn search.
 
-##
+
 ## How to obtain the mapping file
 
 The mapping file could be obtained with tools like Bowtie2 and BBMap, please refer to the manual descriptions for details of the tools. Below is the general way to get the sorted sam/bam file, you thus need to be available to samtools (which could be get here - https://github.com/samtools/samtools).
@@ -200,7 +212,6 @@ CoverM is a fast DNA read coverage and relative abundance calculator focused on 
 pyCoverM is a simple Python interface to CoverM's fast coverage estimation functions, which could be found here (https://github.com/apcamargo/pycoverm).
 
 
-##
 ## How to run
 (1) The users can only specify the required parameters:
 
@@ -222,7 +233,7 @@ cobra-meta -f all.contigs.fasta -q query.fasta -o query.fasta.COBRA.out -c cover
 cobra-meta -f all.contigs.fasta -q query.fasta -o query.fasta.COBRA.out -c coverage.txt -m mapping.sam -a megahit -mink 21 -maxk 141 -mm 2
 ```
 
-##
+
 ## Output files
 Below is a general list of output files in the output folder:
 
@@ -321,11 +332,3 @@ contig-140_188  38386   5       48986   48291   9905    Extended_circular
 # Check "COBRA_joining_summary.txt" for joining details of "Extended_circular" and "Extended_partial" queries.
 ======================================================================================================================================================
 ```
-
-##
-## Citation
-The paper is out at Nature Microbiology (https://www.nature.com/articles/s41564-023-01598-2). Please cite if you find it helpful for your analyses.
-
-##
-## Questions
-Please do not hesitate to contact me for any questions you have when using COBRA via my email (linkingchan@gmail.com), or Twitter (https://twitter.com/ChenLinxing).
