@@ -19,7 +19,8 @@ do not have the expected output files, see the log file.
 ```
 
 ## Citation
-The paper is out at Nature Microbiology (https://www.nature.com/articles/s41564-023-01598-2). Please cite if you find it helpful for your analyses.
+The paper is out at Nature Microbiology (https://www.nature.com/articles/s41564-023-01598-2). Please cite as follows if you find COBRA is helpful for your analyses. 
+```Chen, L., Banfield, J.F. COBRA improves the completeness and contiguity of viral genomes assembled from metagenomes. Nat Microbiol (2024). https://doi.org/10.1038/s41564-023-01598-2```
 
 
 ## Introduction
