@@ -16,7 +16,7 @@ from typing import Literal, TextIO, TypedDict
 import Bio
 import pysam
 from Bio import SeqIO
-from Bio.Seq import reverse_complement
+from Bio.Seq import reverse_complement, Seq
 
 bio_version = Bio.__version__
 if bio_version > "1.79":
@@ -130,9 +130,8 @@ cov = {}  # the coverage of contigs
 header2seq = {}
 header2len = {}
 link_pair = {}  # used to save all overlaps between ends
-parsed_linkage = (
-    set()
-)  # Initialize an empty set to store the parsed linkage information
+# Initialize an empty set to store the parsed linkage information
+parsed_linkage = set()
 one_path_end = []  # the end of contigs with one potential join
 two_paths_end = []  # the end of contigs with two potential joins
 self_circular = set()
@@ -147,7 +146,7 @@ extended_circular_query = set()
 extended_partial_query = set()
 order_all = {}
 added_to_contig = {}
-all_joined_query = set()
+all_joined_query: set[str] = set()
 
 
 ##
@@ -161,40 +160,34 @@ def log_info(step: str, description: str, log_file: TextIO, line_feed="\n"):
     )
 
 
-def determine_file_format(filename):
+def determine_file_format(filename: str):
     """
     Determine the format of the input file.
     Returns either "fasta" or "txt" based on the content.
     """
     with open(filename, "r") as f:
-        first_line = f.readline().strip()
+        first_line = next(f)
         if first_line.startswith(">"):
             return "fasta"
         else:
             return "txt"
 
 
-def contig_name(end_name):
+def contig_name(end_name: str):
     """
     get contig name from end name
     """
-    if (
-        end_name.endswith("_L")
-        or end_name.endswith("_R")
-        or end_name.endswith("_Lrc")
-        or end_name.endswith("_Rrc")
-    ):
+    if end_name.rsplit("_", 1)[-1] in ("L", "R", "Lrc", "Rrc"):
         return end_name.rsplit("_", 1)[0]
     else:
         return end_name
 
 
-def get_target(item):
+def get_target(item: str):
     """
     to get the target for next run of joining
     """
-    suffix = item.rsplit("_", 1)[1]
-    base_name = item.rsplit("_", 1)[0]
+    base_name, suffix = item.rsplit("_", 1)
 
     if suffix == "Lrc":
         return base_name + "_Rrc"
@@ -593,7 +586,7 @@ def join_walker(contig, direction):
     return a < len(contig2join[end])
 
 
-def join_seqs(contig):
+def join_seqs(contig: str):
     """
     get the join order of the sequences in a give path
     """
@@ -669,7 +662,7 @@ def join_seqs(contig):
                 order_all[contig].append(item)
 
 
-def retrieve(contig):
+def retrieve(contig: str):
     """
     to retrieve and save all the contigs in the joining path of a query
     """
@@ -688,7 +681,7 @@ def retrieve(contig):
         pass
 
 
-def count_seq(fasta_file):
+def count_seq(fasta_file: str):
     """
     calculate the number of seqs in a fasta file
     """
@@ -701,7 +694,7 @@ def count_seq(fasta_file):
     return seq_num
 
 
-def count_len(fasta_file):
+def count_len(fasta_file: str):
     """
     calculate the length of sequences in a fasta file
     """
@@ -714,196 +707,82 @@ def count_len(fasta_file):
     return seq_len
 
 
-def summary_fasta(fasta_file, length: int):
+def summary_fasta(fasta_file: str, length: int):
     """
     summary basic information of a fasta file
     """
     summary_file = open("{0}.summary.txt".format(fasta_file), "w")
+    summary_file_headers = ["SeqID", "Length", "Coverage", "GC", "Ns"]
     if "self_circular" in fasta_file:
-        summary_file_headers = [
-            "SeqID",
-            "Length",
-            "Coverage",
-            "GC",
-            "Ns",
-            "DTR_length",
-            "\n",
+        summary_file_headers.append("DTR_length")
+    summary_file.write("\t".join(summary_file_headers) + "\n")
+    summary_file.flush()
+
+    record: SeqIO.SeqRecord
+    for record in SeqIO.parse(f"{fasta_file}", "fasta"):
+        header = str(record.id).strip()
+        seq: Seq = record.seq
+        sequence_stats = [
+            header,
+            str(len(seq)),
+            "",
+            str(round(GC(seq), 3)),
+            str(seq.count("N")),
         ]
-        summary_file.write("\t".join(summary_file_headers[:]))
-        summary_file.flush()
-    else:
-        summary_file_headers = ["SeqID", "Length", "Coverage", "GC", "Ns", "\n"]
-        summary_file.write("\t".join(summary_file_headers[:]))
-        summary_file.flush()
-
-    with open("{0}".format(fasta_file), "r") as f:
-        for record in SeqIO.parse(f, "fasta"):
-            header = str(record.id).strip()
-            seq = str(record.seq)
-            ns = seq.count("N")
-            if header.split("_self")[0] in self_circular:
-                sequence_stats = [
-                    header,
-                    str(len(seq)),
-                    str(cov[header.split("_self")[0]]),
-                    str(round(GC(seq), 3)),
-                    str(ns),
-                    str(length),
-                    "\n",
-                ]
-                summary_file.write("\t".join(sequence_stats[:]))
-            elif header.split("_self")[0] in self_circular_non_expected_overlap.keys():
-                sequence_stats = [
-                    header,
-                    str(len(seq)),
-                    str(cov[header.split("_self")[0]]),
-                    str(round(GC(seq), 3)),
-                    str(ns),
-                    str(self_circular_non_expected_overlap[header.split("_self")[0]]),
-                    "\n",
-                ]
-                summary_file.write("\t".join(sequence_stats[:]))
-            else:
-                sequence_stats = [
-                    header,
-                    str(len(seq)),
-                    str(cov[header.split("_extended")[0]]),
-                    str(round(GC(seq), 3)),
-                    str(ns),
-                    "\n",
-                ]
-                summary_file.write("\t".join(sequence_stats[:]))
-    f.close()
-
-
-def get_joined_seqs(fasta_file):
-    joined_seqs = []
-    a = open(fasta_file, "r")
-    for line in a.readlines():
-        if line.startswith(">"):
-            joined_seqs.append(line.strip().split(" ")[0][1:])
+        if header.split("_self")[0] in self_circular:
+            sequence_stats[2] = str(cov[header.split("_self")[0]])
+            sequence_stats.append(str(length))
+        elif header.split("_self")[0] in self_circular_non_expected_overlap.keys():
+            sequence_stats[2] = str(cov[header.split("_self")[0]])
+            sequence_stats.append(
+                str(self_circular_non_expected_overlap[header.split("_self")[0]])
+            )
         else:
-            pass
-    for item in joined_seqs:
-        all_joined_query.add(item)
+            sequence_stats[2] = str(cov[header.split("_extended")[0]])
+        summary_file.write("\t".join(sequence_stats) + "\n")
+
+
+def get_joined_seqs(fasta_file: str):
+    joined_seqs: list[str] = []
+    with open(fasta_file) as a:
+        for line in a:
+            if line.startswith(">"):
+                joined_seqs.append(line.strip().split(" ")[0][1:])
+    all_joined_query.update(joined_seqs)
     return ",".join(joined_seqs[:])
 
 
-def summarize(contig):
+def summarize(contig: str):
     """
     summary the retrieved contigs and joined information of each query
     """
     if contig not in is_subset_of.keys():
-        b = count_seq(
-            "COBRA_retrieved_for_joining/{0}_retrieved.fa".format(contig)
-        )  # number of retrieved contigs
-        c = count_len(
-            "COBRA_retrieved_for_joining/{0}_retrieved.fa".format(contig)
-        )  # total length of retrieved contigs
-        d = count_len(
-            "COBRA_retrieved_for_joining/{0}_retrieved_joined.fa".format(contig)
-        )  # total length after joining
-        e = get_joined_seqs(
-            "COBRA_retrieved_for_joining/{0}_retrieved.fa".format(contig)
-        )
-        if contig in extended_circular_query:
-            return "\t".join(
-                [
-                    str(b),
-                    e,
-                    str(c),
-                    str(d),
-                    str(d - header2len[contig]),
-                    "Extended_circular",
-                ]
-            )
-        elif contig in extended_partial_query:
-            return "\t".join(
-                [
-                    str(b),
-                    e,
-                    str(c),
-                    str(d),
-                    str(d - header2len[contig]),
-                    "Extended_partial",
-                ]
-            )
+        item = contig
     else:
         if is_subset_of[contig] in is_subset_of.keys():
             item = is_subset_of[is_subset_of[contig]]
-            b = count_seq(
-                "COBRA_retrieved_for_joining/{0}_retrieved.fa".format(item)
-            )  # number of retrieved contigs
-            c = count_len(
-                "COBRA_retrieved_for_joining/{0}_retrieved.fa".format(item)
-            )  # total length of retrieved contigs
-            d = count_len(
-                "COBRA_retrieved_for_joining/{0}_retrieved_joined.fa".format(item)
-            )  # total length after joining
-            e = get_joined_seqs(
-                "COBRA_retrieved_for_joining/{0}_retrieved.fa".format(item)
-            )
-            if contig in extended_circular_query:
-                return "\t".join(
-                    [
-                        str(b),
-                        e,
-                        str(c),
-                        str(d),
-                        str(d - header2len[contig]),
-                        "Extended_circular",
-                    ]
-                )
-            elif contig in extended_partial_query:
-                return "\t".join(
-                    [
-                        str(b),
-                        e,
-                        str(c),
-                        str(d),
-                        str(d - header2len[contig]),
-                        "Extended_partial",
-                    ]
-                )
         else:
             item = is_subset_of[contig]
-            b = count_seq(
-                "COBRA_retrieved_for_joining/{0}_retrieved.fa".format(item)
-            )  # number of retrieved contigs
-            c = count_len(
-                "COBRA_retrieved_for_joining/{0}_retrieved.fa".format(item)
-            )  # total length of retrieved contigs
-            d = count_len(
-                "COBRA_retrieved_for_joining/{0}_retrieved_joined.fa".format(item)
-            )  # total length after joining
-            e = get_joined_seqs(
-                "COBRA_retrieved_for_joining/{0}_retrieved.fa".format(item)
-            )
-            if contig in extended_circular_query:
-                return "\t".join(
-                    [
-                        str(b),
-                        e,
-                        str(c),
-                        str(d),
-                        str(d - header2len[contig]),
-                        "Extended_circular",
-                    ]
-                )
-            elif contig in extended_partial_query:
-                return "\t".join(
-                    [
-                        str(b),
-                        e,
-                        str(c),
-                        str(d),
-                        str(d - header2len[contig]),
-                        "Extended_partial",
-                    ]
-                )
+    b = count_seq(
+        f"COBRA_retrieved_for_joining/{item}_retrieved.fa"
+    )  # number of retrieved contigs
+    c = count_len(
+        f"COBRA_retrieved_for_joining/{item}_retrieved.fa"
+    )  # total length of retrieved contigs
+    d = count_len(
+        f"COBRA_retrieved_for_joining/{item}_retrieved_joined.fa"
+    )  # total length after joining
+    e = get_joined_seqs(f"COBRA_retrieved_for_joining/{item}_retrieved.fa")
+    if contig in extended_circular_query:
+        exteneded = "Extended_circular"
+    elif contig in extended_partial_query:
+        exteneded = "Extended_partial"
+    return "\t".join(
+        [str(b), e, str(c), str(d), str(d - header2len[contig]), exteneded]
+    )
 
 
-def get_direction(item):
+def get_direction(item: str):
     """
     get the direction in a joining path
     """
@@ -913,13 +792,11 @@ def get_direction(item):
         return "forward"
 
 
-def total_length(contig_list):
+def total_length(contig_list: list[str]):
     """
     get the total length of all sequences in a joining path before overlap removing
     """
-    total = 0
-    for item in contig_list:
-        total += header2len[contig_name(item)]
+    total = sum(header2len[contig_name(item)] for item in contig_list)
     return total
 
 
