@@ -23,86 +23,89 @@ if bio_version > "1.79":
 else:
     from Bio.SeqUtils import GC  # type: ignore
 
-parser = argparse.ArgumentParser(
-    description="This script is used to get higher quality (including circular) virus genomes "
-    "by joining assembled contigs based on their end overlaps."
-)
-requiredNamed = parser.add_argument_group("required named arguments")
-requiredNamed.add_argument(
-    "-q",
-    "--query",
-    type=str,
-    help="the query contigs file (fasta format), or the query name "
-    "list (text file, one column).",
-    required=True,
-)
-requiredNamed.add_argument(
-    "-f",
-    "--fasta",
-    type=str,
-    help="the whole set of assembled contigs (fasta format).",
-    required=True,
-)
-requiredNamed.add_argument(
-    "-a",
-    "--assembler",
-    type=str,
-    choices=["idba", "megahit", "metaspades"],
-    help="de novo assembler used, COBRA not tested for others.",
-    required=True,
-)
-requiredNamed.add_argument(
-    "-mink",
-    "--mink",
-    type=int,
-    help="the min kmer size used in de novo assembly.",
-    required=True,
-)
-requiredNamed.add_argument(
-    "-maxk",
-    "--maxk",
-    type=int,
-    help="the max kmer size used in de novo assembly.",
-    required=True,
-)
-requiredNamed.add_argument(
-    "-m",
-    "--mapping",
-    type=str,
-    help="the reads mapping file in sam or bam format.",
-    required=True,
-)
-requiredNamed.add_argument(
-    "-c",
-    "--coverage",
-    type=str,
-    help="the contig coverage file (two columns divided by tab).",
-    required=True,
-)
-parser.add_argument(
-    "-lm",
-    "--linkage_mismatch",
-    type=int,
-    default=2,
-    help="the max read mapping mismatches for "
-    "determining if two contigs are spanned by "
-    "paired reads. [2]",
-)
-parser.add_argument(
-    "-o",
-    "--output",
-    type=str,
-    help="the name of output folder (default = '<query>_COBRA').",
-)
-parser.add_argument(
-    "-t",
-    "--threads",
-    type=int,
-    default=16,
-    help="the number of threads for blastn. [16]",
-)
-parser.add_argument("-v", "--version", action="version", version="cobra v1.2.3")
-args = parser.parse_args()
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="This script is used to get higher quality (including circular) virus genomes "
+        "by joining assembled contigs based on their end overlaps."
+    )
+    requiredNamed = parser.add_argument_group("required named arguments")
+    requiredNamed.add_argument(
+        "-q",
+        "--query",
+        type=str,
+        help="the query contigs file (fasta format), or the query name "
+        "list (text file, one column).",
+        required=True,
+    )
+    requiredNamed.add_argument(
+        "-f",
+        "--fasta",
+        type=str,
+        help="the whole set of assembled contigs (fasta format).",
+        required=True,
+    )
+    requiredNamed.add_argument(
+        "-a",
+        "--assembler",
+        type=str,
+        choices=["idba", "megahit", "metaspades"],
+        help="de novo assembler used, COBRA not tested for others.",
+        required=True,
+    )
+    requiredNamed.add_argument(
+        "-mink",
+        "--mink",
+        type=int,
+        help="the min kmer size used in de novo assembly.",
+        required=True,
+    )
+    requiredNamed.add_argument(
+        "-maxk",
+        "--maxk",
+        type=int,
+        help="the max kmer size used in de novo assembly.",
+        required=True,
+    )
+    requiredNamed.add_argument(
+        "-m",
+        "--mapping",
+        type=str,
+        help="the reads mapping file in sam or bam format.",
+        required=True,
+    )
+    requiredNamed.add_argument(
+        "-c",
+        "--coverage",
+        type=str,
+        help="the contig coverage file (two columns divided by tab).",
+        required=True,
+    )
+    parser.add_argument(
+        "-lm",
+        "--linkage_mismatch",
+        type=int,
+        default=2,
+        help="the max read mapping mismatches for "
+        "determining if two contigs are spanned by "
+        "paired reads. [2]",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        help="the name of output folder (default = '<query>_COBRA').",
+    )
+    parser.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        default=16,
+        help="the number of threads for blastn. [16]",
+    )
+    parser.add_argument("-v", "--version", action="version", version="cobra v1.2.3")
+    return parser.parse_args()
+
 
 ##
 #
@@ -701,7 +704,7 @@ def count_len(fasta_file):
     return seq_len
 
 
-def summary_fasta(fasta_file):
+def summary_fasta(fasta_file, length: int):
     """
     summary basic information of a fasta file
     """
@@ -729,7 +732,6 @@ def summary_fasta(fasta_file):
             seq = str(record.seq)
             ns = seq.count("N")
             if header.split("_self")[0] in self_circular:
-                length = args.maxk - 1 if args.assembler == "idba" else args.maxk
                 sequence_stats = [
                     header,
                     str(len(seq)),
@@ -912,6 +914,7 @@ def total_length(contig_list):
 
 
 def main():
+    args = parse_args()
     ##
     # get information from the input files and parameters and save information
     # get the name of the query fasta file
@@ -2131,8 +2134,10 @@ def main():
             pass
     extended_partial_fasta.close()
     extended_circular_fasta.close()
-    summary_fasta("COBRA_category_ii-a_extended_circular_unique.fasta")
-    summary_fasta("COBRA_category_ii-b_extended_partial_unique.fasta")
+
+    maxk_length = args.maxk - 1 if args.assembler == "idba" else args.maxk
+    summary_fasta("COBRA_category_ii-a_extended_circular_unique.fasta", maxk_length)
+    summary_fasta("COBRA_category_ii-b_extended_partial_unique.fasta", maxk_length)
 
     # for debug
     print("query2current", file=debug, flush=True)
@@ -2505,7 +2510,7 @@ def main():
         else:
             pass
     failed_join.close()
-    summary_fasta("COBRA_category_ii-c_extended_failed.fasta")
+    summary_fasta("COBRA_category_ii-c_extended_failed.fasta", maxk_length)
 
     # for those due to orphan end
     orphan_end = open("COBRA_category_iii_orphan_end.fasta", "w")
@@ -2527,7 +2532,7 @@ def main():
             + "\n"
         )
     orphan_end.close()
-    summary_fasta("COBRA_category_iii_orphan_end.fasta")
+    summary_fasta("COBRA_category_iii_orphan_end.fasta", maxk_length)
 
     # for self circular
     log_info("[22/23]", "Saving self_circular contigs.", "\n", log)
@@ -2571,7 +2576,7 @@ def main():
 
     circular_fasta.close()
     assembled_info.close()
-    summary_fasta("COBRA_category_i_self_circular.fasta")
+    summary_fasta("COBRA_category_i_self_circular.fasta", maxk_length)
 
     ##
     # save new fasta file with all the others used in joining replaced by COBRA sequences excepting self_circular ones
