@@ -1241,9 +1241,8 @@ def main():
         log,
     )
     linkage = defaultdict(set)  # Initialize a defaultdict to store linked contigs
-    contig_spanned_by_PE_reads = (
-        {}
-    )  # Initialize a dictionary to store paired-end reads spanning contigs
+    # Initialize a dictionary to store paired-end reads spanning contigs
+    contig_spanned_by_PE_reads = {}
 
     for contig in orphan_end_query:
         contig_spanned_by_PE_reads[contig] = defaultdict(
@@ -1251,42 +1250,37 @@ def main():
         )  # Create a defaultdict(list) for each contig in header2seq
 
     with pysam.AlignmentFile("{0}".format(args.mapping), "rb") as map_file:
-        for line in map_file:
-            if not line.is_unmapped and line.get_tag("NM") <= args.linkage_mismatch:
+        for rmap in map_file:
+            if not rmap.is_unmapped and rmap.get_tag("NM") <= args.linkage_mismatch:
                 # mismatch should not be more than the defined threshold
-                if line.reference_name != line.next_reference_name:
+                if rmap.reference_name != rmap.next_reference_name:
+                    assert rmap.reference_name is not None
                     # Check if the read and its mate map to different contigs
-                    if header2len[line.reference_name] > 1000:
+                    if header2len[rmap.reference_name] > 1000:
                         # If the contig length is greater than 1000, determine if the read maps to the left or right end
-                        if line.reference_start <= 500:
-                            linkage[line.query_name].add(
-                                line.reference_name + "_L"
+                        if rmap.reference_start <= 500:
+                            linkage[rmap.query_name].add(
+                                rmap.reference_name + "_L"
                             )  # left end
                         else:
-                            linkage[line.query_name].add(
-                                line.reference_name + "_R"
+                            linkage[rmap.query_name].add(
+                                rmap.reference_name + "_R"
                             )  # right end
                     else:
                         # If the contig length is 1000 or less, add both the left and right ends to the linkage
-                        linkage[line.query_name].add(line.reference_name + "_L")
-                        linkage[line.query_name].add(line.reference_name + "_R")
+                        linkage[rmap.query_name].add(rmap.reference_name + "_L")
+                        linkage[rmap.query_name].add(rmap.reference_name + "_R")
                 else:
                     # If the read and its mate map to the same contig, store the read mapped position (start)
-                    if line.reference_name in orphan_end_query:
+                    if rmap.reference_name in orphan_end_query:
                         if (
-                            line.reference_start <= 500
-                            or header2len[line.reference_name] - line.reference_start
+                            rmap.reference_start <= 500
+                            or header2len[rmap.reference_name] - rmap.reference_start
                             <= 500
                         ):
-                            contig_spanned_by_PE_reads[line.reference_name][
-                                line.query_name
-                            ].append(line.reference_start)
-                        else:
-                            pass
-                    else:
-                        pass
-            else:
-                pass
+                            contig_spanned_by_PE_reads[rmap.reference_name][
+                                rmap.query_name
+                            ].append(rmap.reference_start)
 
     #
     log_info("[07/23]", "Parsing the linkage information.", log)
