@@ -11,6 +11,7 @@ import itertools
 import os
 from collections import defaultdict
 from time import strftime
+from typing import Literal, TextIO, TypedDict
 
 import Bio
 import pysam
@@ -22,6 +23,19 @@ if bio_version > "1.79":
     from Bio.SeqUtils import gc_fraction as GC
 else:
     from Bio.SeqUtils import GC  # type: ignore
+
+
+class COBRA_ARGS(TypedDict):
+    query: str
+    fasta: str
+    assembler: Literal["idba", "megahit", "metaspades"]
+    mink: int
+    maxk: int
+    mapping: str
+    coverage: str
+    linkage_mismatch: int
+    output: str
+    threads: int
 
 
 def parse_args():
@@ -138,17 +152,13 @@ all_joined_query = set()
 
 ##
 # define functions for analyses
-def log_info(step, description, line_feed, log_file):
-    localtime = (
-        " [20"
-        + strftime("%x").rsplit("/", 1)[1]
-        + "/"
-        + strftime("%x").rsplit("/", 1)[0]
-        + " "
-        + strftime("%X")
-        + "] "
+def log_info(step: str, description: str, log_file: TextIO, line_feed="\n"):
+    print(
+        step + strftime("[%Y/%m/%d %H:%M:%S]") + description,
+        end=line_feed,
+        file=log_file,
+        flush=True,
     )
-    print(step + localtime + description, end=line_feed, file=log_file, flush=True)
 
 
 def determine_file_format(filename):
@@ -1006,7 +1016,7 @@ def main():
     ##
     # import the whole contigs and save their end sequences
     log_info(
-        "[01/23]", "Reading contigs and getting the contig end sequences. ", "", log
+        "[01/23]", "Reading contigs and getting the contig end sequences. ", log, ""
     )
     # header2seq = {}
     # header2len = {}
@@ -1038,7 +1048,7 @@ def main():
 
     ##
     # get potential joins
-    log_info("[02/23]", "Getting shared contig ends.", "\n", log)
+    log_info("[02/23]", "Getting shared contig ends.", log)
 
     # link_pair = {}  # used to save all overlaps between ends
 
@@ -1123,7 +1133,7 @@ def main():
 
     ##
     # save all paired links to a file
-    log_info("[03/23]", "Writing contig end joining pairs.", "\n", log)
+    log_info("[03/23]", "Writing contig end joining pairs.", log)
 
     p = open("{0}/COBRA_end_joining_pairs.txt".format(working_dir), "w")
 
@@ -1151,7 +1161,7 @@ def main():
 
     ##
     # read and save the coverage of all contigs
-    log_info("[04/23]", "Getting contig coverage information.", "\n", log)
+    log_info("[04/23]", "Getting contig coverage information.", log)
     coverage = open("{0}".format(args.coverage), "r")
     for line in coverage.readlines():
         line = line.strip().split("\t")
@@ -1169,7 +1179,7 @@ def main():
     ##
     # open the query file and save the information
 
-    log_info("[05/23]", "Getting query contig list. ", "", log)
+    log_info("[05/23]", "Getting query contig list. ", log, "")
     query_set = set()
     orphan_end_query = set()
     non_orphan_end_query = set()
@@ -1228,7 +1238,6 @@ def main():
     log_info(
         "[06/23]",
         "Getting contig linkage based on sam/bam. Be patient, this may take long.",
-        "\n",
         log,
     )
     linkage = defaultdict(set)  # Initialize a defaultdict to store linked contigs
@@ -1280,7 +1289,7 @@ def main():
                 pass
 
     #
-    log_info("[07/23]", "Parsing the linkage information.", "\n", log)
+    log_info("[07/23]", "Parsing the linkage information.", log)
 
     for read in linkage.keys():
         if len(linkage[read]) >= 2:  # Process only reads linked to at least two contigs
@@ -1330,7 +1339,7 @@ def main():
 
     ##
     #
-    log_info("[08/23]", "Detecting self_circular contigs. ", "\n", log)
+    log_info("[08/23]", "Detecting self_circular contigs. ", log)
 
     for contig in non_orphan_end_query:
         detect_self_circular(contig)
@@ -1377,7 +1386,7 @@ def main():
 
     ##
     # walk the joins
-    log_info("[09/23]", "Detecting joins of contigs. ", "", log)
+    log_info("[09/23]", "Detecting joins of contigs. ", log)
 
     for contig in query_set:
         contig2join[contig + "_L"] = []
@@ -1423,7 +1432,7 @@ def main():
     ##
     # save the potential joining paths
     log.write("100% finished." + "\n")
-    log_info("[10/23]", "Saving potential joining paths.", "\n", log)
+    log_info("[10/23]", "Saving potential joining paths.", log)
 
     with open(
         "{0}/COBRA_potential_joining_paths.txt".format(working_dir), "w"
@@ -1468,7 +1477,7 @@ def main():
 
     ##
     # get the joining paths
-    log_info("[11/23]", "Checking for invalid joining: sharing queries.", "\n", log)
+    log_info("[11/23]", "Checking for invalid joining: sharing queries.", log)
     contig2assembly = {}
     for item in contig2join.keys():
         contig = contig_name(item)
@@ -1651,9 +1660,7 @@ def main():
 
     ##
     # determine the joining status of queries
-    log_info(
-        "[12/23]", "Getting initial joining status of each query contig.", "\n", log
-    )
+    log_info("[12/23]", "Getting initial joining status of each query contig.", log)
 
     for contig in contig2assembly.keys():
         if contig not in failed_join_list:
@@ -1684,7 +1691,7 @@ def main():
 
     ##
     # deal with cross-assignment queries
-    log_info("[13/23]", "Getting final joining status of each query contig.", "\n", log)
+    log_info("[13/23]", "Getting final joining status of each query contig.", log)
     for contig in failed_join_list:
         if (
             contig in is_subset_of.keys()
@@ -1774,7 +1781,7 @@ def main():
 
     ##
     # get the joining order of contigs
-    log_info("[14/23]", "Getting the joining order of contigs.", "\n", log)
+    log_info("[14/23]", "Getting the joining order of contigs.", log)
     # order_all = {}
     # added_to_contig = {}
 
@@ -1804,7 +1811,7 @@ def main():
 
     ##
     # get retrieved sequences
-    log_info("[15/23]", "Getting retrieved contigs.", "\n", log)
+    log_info("[15/23]", "Getting retrieved contigs.", log)
     os.chdir("{0}".format(working_dir))
     os.mkdir("COBRA_retrieved_for_joining")
     retrieved = []
@@ -1818,7 +1825,7 @@ def main():
 
     ##
     # writing joined sequences
-    log_info("[16/23]", "Saving joined seqeuences.", "\n", log)
+    log_info("[16/23]", "Saving joined seqeuences.", log)
     header2joined_seq = {}
     contig2extended_status = {}
     for contig in retrieved:
@@ -1937,7 +1944,6 @@ def main():
     log_info(
         "[17/23]",
         "Checking for invalid joining using BLASTn: close strains.",
-        "\n",
         log,
     )
     blastdb_1 = open("blastdb_1.fa", "w")
@@ -2083,7 +2089,6 @@ def main():
     log_info(
         "[18/23]",
         'Saving unique sequences of "Extended_circular" and "Extended_partial" for joining checking.',
-        "\n",
         log,
     )
     extended_circular_fasta = open(
@@ -2149,7 +2154,6 @@ def main():
     log_info(
         "[19/23]",
         'Getting the joining details of unique "Extended_circular" and "Extended_partial" query contigs.',
-        "\n",
         log,
     )
     joining_detail_headers = [
@@ -2387,7 +2391,6 @@ def main():
     log_info(
         "[20/23]",
         'Saving joining summary of "Extended_circular" and "Extended_partial" query contigs.',
-        "\n",
         log,
     )
     assembly_summary = open("COBRA_joining_summary.txt", "w")
@@ -2430,23 +2433,12 @@ def main():
 
     ##
     # save the joining status information of each query
-    log_info("[21/23]", "Saving joining status of all query contigs.", "\n", log)
+    log_info("[21/23]", "Saving joining status of all query contigs.", log)
     assembled_info = open(
         "COBRA_joining_status.txt", "w"
     )  # shows the COBRA status of each query
     assembled_info.write(
-        "SeqID"
-        + "\t"
-        + "Length"
-        + "\t"
-        + "Coverage"
-        + "\t"
-        + "GC"
-        + "\t"
-        + "Status"
-        + "\t"
-        + "Category"
-        + "\n"
+        "\t".join(["SeqID", "Length", "Coverage", "GC", "Status", "Category"])
     )
 
     # for those could be extended to circular
@@ -2535,7 +2527,7 @@ def main():
     summary_fasta("COBRA_category_iii_orphan_end.fasta", maxk_length)
 
     # for self circular
-    log_info("[22/23]", "Saving self_circular contigs.", "\n", log)
+    log_info("[22/23]", "Saving self_circular contigs.", log)
     circular_fasta = open("COBRA_category_i_self_circular.fasta", "w")
 
     for contig in self_circular:
@@ -2580,7 +2572,7 @@ def main():
 
     ##
     # save new fasta file with all the others used in joining replaced by COBRA sequences excepting self_circular ones
-    log_info("[23/23]", "Saving the new fasta file.", "\n", log)
+    log_info("[23/23]", "Saving the new fasta file.", log)
 
     for contig in all_joined_query:
         del header2seq[contig]
