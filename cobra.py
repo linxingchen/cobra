@@ -125,9 +125,10 @@ link_pair: dict[str, list[str]] = {}  # used to save all overlaps between ends
 one_path_end: list[str] = []  # the end of contigs with one potential join
 two_paths_end: list[str] = []  # the end of contigs with two potential joins
 
-cov = {}  # the coverage of contigs
 # Initialize an empty set to store the parsed linkage information
-parsed_linkage = set()
+parsed_linkage: set[tuple[str, str]] = set()
+
+cov = {}  # the coverage of contigs
 self_circular = set()
 self_circular_non_expected_overlap = {}
 contig2join = {}
@@ -989,14 +990,14 @@ def main(
     log_info("[04/23]", "Getting contig coverage information.", log)
     with open(f"{coverage_file}") as coverage:
         # Sometimes will give a file with header, just ignore it once
-        for line in coverage.readlines():
+        for line in coverage:
             header_cov, cov_value = line.strip().split("\t")[:2]
             try:
                 cov[header_cov] = round(float(cov_value), 3)
             except ValueError:
                 pass
             break
-        for line in coverage.readlines():
+        for line in coverage:
             header_cov, cov_value = line.strip().split("\t")[:2]
             cov[header_cov] = round(float(cov_value), 3)
 
@@ -1030,7 +1031,6 @@ def main(
                 )
 
     # distinguish orphan_end_query and non_orphan_end_query:
-
     for header in query_set:
         if (
             header + "_L" not in link_pair.keys()
@@ -1054,34 +1054,31 @@ def main(
         "Getting contig linkage based on sam/bam. Be patient, this may take long.",
         log,
     )
-    linkage = defaultdict(set)  # Initialize a defaultdict to store linked contigs
+    # Initialize a defaultdict to store linked contigs
+    linkage: dict[str, set[str]] = defaultdict(set)
     # Initialize a dictionary to store paired-end reads spanning contigs
-    contig_spanned_by_PE_reads = {}
+    contig_spanned_by_PE_reads: dict[str, dict[str, list[int]]] = {}
 
     for contig in orphan_end_query:
-        contig_spanned_by_PE_reads[contig] = defaultdict(
-            list
-        )  # Create a defaultdict(list) for each contig in header2seq
+        # Create a defaultdict(list) for each contig in header2seq
+        contig_spanned_by_PE_reads[contig] = defaultdict(list)
 
-    with pysam.AlignmentFile("{0}".format(mapping_file), "rb") as map_file:
+    with pysam.AlignmentFile(f"{mapping_file}", "rb") as map_file:
         for rmap in map_file:
-            if not rmap.is_unmapped and rmap.get_tag("NM") <= linkage_mismatch:
+            if not rmap.is_unmapped and int(rmap.get_tag("NM")) <= linkage_mismatch:
+                assert rmap.query_name is not None
                 # mismatch should not be more than the defined threshold
+                # Check if the read and its mate map to different contigs
                 if rmap.reference_name != rmap.next_reference_name:
                     assert rmap.reference_name is not None
-                    # Check if the read and its mate map to different contigs
                     if header2len[rmap.reference_name] > 1000:
-                        # If the contig length is greater than 1000, determine if the read maps to the left or right end
-                        if rmap.reference_start <= 500:
-                            linkage[rmap.query_name].add(
-                                rmap.reference_name + "_L"
-                            )  # left end
-                        else:
-                            linkage[rmap.query_name].add(
-                                rmap.reference_name + "_R"
-                            )  # right end
+                        # determine if the read maps to the left or right end
+                        linkage[rmap.query_name].add(
+                            rmap.reference_name
+                            + ("_L" if rmap.reference_start <= 500 else "_R")
+                        )
                     else:
-                        # If the contig length is 1000 or less, add both the left and right ends to the linkage
+                        # add both the left and right ends to the linkage
                         linkage[rmap.query_name].add(rmap.reference_name + "_L")
                         linkage[rmap.query_name].add(rmap.reference_name + "_R")
                 else:
@@ -1099,7 +1096,7 @@ def main(
     #
     log_info("[07/23]", "Parsing the linkage information.", log)
 
-    for read in linkage.keys():
+    for read in linkage:
         if len(linkage[read]) >= 2:  # Process only reads linked to at least two contigs
             # for item in linkage[read]:
             for item, item_1 in itertools.combinations(linkage[read], 2):
@@ -1116,19 +1113,14 @@ def main(
                     parsed_linkage.add((item_1 + "rc", item))
                     parsed_linkage.add((item + "rc", item_1))
                     parsed_linkage.add((item_1, item + "rc"))
-        else:
-            pass
 
-    linkage = None  # remove it as no longer used later
+    del linkage  # remove it as no longer used later
 
-    #
-    parsed_contig_spanned_by_PE_reads = (
-        set()
-    )  # Initialize a set to store the contig spanned by paired-end reads
+    # Initialize a set to store the contig spanned by paired-end reads
+    parsed_contig_spanned_by_PE_reads: set[str] = set()
     for contig in orphan_end_query:
-        for PE in contig_spanned_by_PE_reads[
-            contig
-        ].keys():  # Check if the count is 0 and the contig has exactly two paired-end reads
+        # Check if the count is 0 and the contig has exactly two paired-end reads
+        for PE in contig_spanned_by_PE_reads[contig]:
             if len(contig_spanned_by_PE_reads[contig][PE]) == 2:
                 # Check if the absolute difference between the positions of the two paired-end reads is greater than or equal to
                 # the length of contig minus 1000 bp
@@ -1140,10 +1132,6 @@ def main(
                     >= header2len[contig] - 1000
                 ):
                     parsed_contig_spanned_by_PE_reads.add(contig)
-                else:
-                    pass
-            else:
-                pass
 
     ##
     #
@@ -1167,11 +1155,8 @@ def main(
     else:
         min_over_len = mink
 
-    for (
-        contig
-    ) in (
-        orphan_end_query
-    ):  # determine if there is DTR for those query with orphan ends, if yes, assign as self_circular as well
+    # determine if there is DTR for those query with orphan ends, if yes, assign as self_circular as well
+    for contig in orphan_end_query:
         if contig in parsed_contig_spanned_by_PE_reads:
             sequence = header2seq[contig]
             end_part = sequence[-min_over_len:]
@@ -1179,14 +1164,8 @@ def main(
                 expected_end = sequence.split(end_part)[0] + end_part
                 if sequence.endswith(expected_end):
                     self_circular_non_expected_overlap[contig] = len(expected_end)
-                else:
-                    pass
-            else:
-                pass
-        else:
-            pass
 
-    for contig in self_circular_non_expected_overlap.keys():
+    for contig in self_circular_non_expected_overlap:
         orphan_end_query.remove(contig)
 
     # debug
