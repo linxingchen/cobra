@@ -800,89 +800,62 @@ def total_length(contig_list: list[str]):
     return total
 
 
-def main(args):
+def main(
+    args,
+    query_fa: str,
+    assem_fa: str,
+    mapping_file: str,
+    coverage_file: str,
+    maxk: int,
+    mink: int,
+    assembler: Literal["idba", "megahit", "metaspades"],
+    outdir: str = "",
+    linkage_mismatch: int = 2,
+):
     ##
     # get information from the input files and parameters and save information
     # get the name of the query fasta file
-    if "/" in args.query:
-        query_name = "{0}".format(args.query).rsplit("/", 1)[1]
-    else:
-        query_name = "{0}".format(args.query)
+    query_name = f"{query_fa}".rsplit("/", 1)[1] if "/" in query_fa else f"{query_fa}"
 
     # get the name of the whole contigs fasta file
-    if "/" in args.fasta:
-        fasta_name = "{0}".format(args.fasta).rsplit("/", 1)[1]
-    else:
-        fasta_name = "{0}".format(args.fasta)
+    fasta_name = f"{assem_fa}".rsplit("/", 1)[1] if "/" in assem_fa else f"{assem_fa}"
 
     # folder of output
-    if not args.output:
-        working_dir = "{0}_COBRA".format(query_name)
-    else:
-        working_dir = "{0}".format(args.output)
+    working_dir = f"{outdir}" if outdir else f"{query_name}_COBRA"
 
     # checking if output folder exists
-    if os.path.exists("{0}".format(working_dir)):
-        print("Output folder <{0}> exists, please check.".format(working_dir))
-        exit()
+    if os.path.exists(working_dir):
+        raise FileExistsError(f"Output folder <{working_dir}> exists, please check.")
     else:
-        os.mkdir("{0}".format(working_dir))
+        os.mkdir(working_dir)
 
     # determine the length of overlap based on assembler and the largest kmer size
-    maxk_length = args.maxk - 1 if args.assembler == "idba" else args.maxk
+    maxk_length = maxk - 1 if assembler == "idba" else maxk
 
     # write input files information to log file
     log = open("{0}/log".format(working_dir), "w")  # log file
     log.write("1. INPUT INFORMATION" + "\n")
-    log.flush()
-
-    if args.assembler == "idba":
-        parameters = [
-            "# Assembler: IDBA_UD",
-            "# Min-kmer: " + str(args.mink).strip(),
-            "# Max-kmer: " + str(args.maxk).strip(),
-            "# Overlap length: " + str(maxk_length) + " bp",
-            "# Read mapping max mismatches for contig linkage: "
-            + str(args.linkage_mismatch),
-            "# Query contigs: " + os.path.abspath(args.query),
-            "# Whole contig set: " + os.path.abspath(args.fasta),
-            "# Mapping file: " + os.path.abspath(args.mapping),
-            "# Coverage file: " + os.path.abspath(args.coverage),
-            "# Output folder: " + os.path.abspath(working_dir),
-            "\n",
-        ]
-    elif args.assembler == "metaspades":
-        parameters = [
-            "# Assembler: metaSPAdes",
-            "# Min-kmer: " + str(args.mink).strip(),
-            "# Max-kmer: " + str(args.maxk).strip(),
-            "# Overlap length: " + str(maxk_length) + " bp",
-            "# Read mapping max mismatches for contig linkage: "
-            + str(args.linkage_mismatch),
-            "# Query contigs: " + os.path.abspath(args.query),
-            "# Whole contig set: " + os.path.abspath(args.fasta),
-            "# Mapping file: " + os.path.abspath(args.mapping),
-            "# Coverage file: " + os.path.abspath(args.coverage),
-            "# Output folder: " + os.path.abspath(working_dir),
-            "\n",
-        ]
-    else:
-        parameters = [
-            "# Assembler: MEGAHIT",
-            "# Min-kmer: " + str(args.mink).strip(),
-            "# Max-kmer: " + str(args.maxk).strip(),
-            "# Overlap length: " + str(maxk_length) + " bp",
-            "# Read mapping max mismatches for contig linkage: "
-            + str(args.linkage_mismatch),
-            "# Query contigs: " + os.path.abspath(args.query),
-            "# Whole contig set: " + os.path.abspath(args.fasta),
-            "# Mapping file: " + os.path.abspath(args.mapping),
-            "# Coverage file: " + os.path.abspath(args.coverage),
-            "# Output folder: " + os.path.abspath(working_dir),
-            "\n",
-        ]
-
-    log.write("\n".join(parameters[:]))
+    log.write(
+        "\n".join(
+            [
+                "# Assembler: "
+                + {"idba": "IDBA_UD", "metaspades": "metaSPAdes", "megahit": "MEGAHIT"}[
+                    assembler
+                ],
+                "# Min-kmer: " + str(mink).strip(),
+                "# Max-kmer: " + str(maxk).strip(),
+                "# Overlap length: " + str(maxk_length) + " bp",
+                "# Read mapping max mismatches for contig linkage: "
+                + str(linkage_mismatch),
+                "# Query contigs: " + os.path.abspath(query_fa),
+                "# Whole contig set: " + os.path.abspath(assem_fa),
+                "# Mapping file: " + os.path.abspath(mapping_file),
+                "# Coverage file: " + os.path.abspath(coverage_file),
+                "# Output folder: " + os.path.abspath(working_dir),
+                "\n",
+            ]
+        )
+    )
     log.write("2. PROCESSING STEPS" + "\n")
     log.flush()
 
@@ -899,7 +872,7 @@ def main(args):
     Lrc = {}
     Rrc = {}
 
-    with open("{0}".format(args.fasta), "r") as f:
+    with open("{0}".format(assem_fa), "r") as f:
         for record in SeqIO.parse(f, "fasta"):
             header = str(record.id).strip()
             seq = str(record.seq)
@@ -1035,7 +1008,7 @@ def main(args):
     ##
     # read and save the coverage of all contigs
     log_info("[04/23]", "Getting contig coverage information.", log)
-    coverage = open("{0}".format(args.coverage), "r")
+    coverage = open("{0}".format(coverage_file), "r")
     for line in coverage.readlines():
         line = line.strip().split("\t")
         cov[line[0]] = round(float(line[1]), 3)
@@ -1057,9 +1030,9 @@ def main(args):
     orphan_end_query = set()
     non_orphan_end_query = set()
 
-    with open("{0}".format(args.query), "r") as query_file:
+    with open("{0}".format(query_fa), "r") as query_file:
         if (
-            determine_file_format(args.query) == "fasta"
+            determine_file_format(query_fa) == "fasta"
         ):  # if the query file is in fasta format
             for record in SeqIO.parse(query_file, "fasta"):
                 header = str(record.id).strip()
@@ -1122,9 +1095,9 @@ def main(args):
             list
         )  # Create a defaultdict(list) for each contig in header2seq
 
-    with pysam.AlignmentFile("{0}".format(args.mapping), "rb") as map_file:
+    with pysam.AlignmentFile("{0}".format(mapping_file), "rb") as map_file:
         for rmap in map_file:
-            if not rmap.is_unmapped and rmap.get_tag("NM") <= args.linkage_mismatch:
+            if not rmap.is_unmapped and rmap.get_tag("NM") <= linkage_mismatch:
                 # mismatch should not be more than the defined threshold
                 if rmap.reference_name != rmap.next_reference_name:
                     assert rmap.reference_name is not None
@@ -1221,10 +1194,10 @@ def main(args):
     # determine potential self_circular contigs from contigs with orphan end
 
     min_over_len = 0
-    if args.assembler == "idba":
-        min_over_len = args.mink - 1
+    if assembler == "idba":
+        min_over_len = mink - 1
     else:
-        min_over_len = args.mink
+        min_over_len = mink
 
     for (
         contig
@@ -2506,4 +2479,15 @@ def main(args):
 
 if __name__ == "__main__":
     args = parse_args()
-    main(args)
+    main(
+        args,
+        query_fa=args.query,
+        assem_fa=args.fasta,
+        mapping_file=args.mapping,
+        coverage_file=args.coverage,
+        maxk=args.maxk,
+        mink=args.mink,
+        assembler=args.assembler,
+        outdir=args.output,
+        linkage_mismatch=args.linkage_mismatch,
+    )
