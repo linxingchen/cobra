@@ -800,8 +800,7 @@ def total_length(contig_list: list[str]):
     return total
 
 
-def main():
-    args = parse_args()
+def main(args):
     ##
     # get information from the input files and parameters and save information
     # get the name of the query fasta file
@@ -830,10 +829,7 @@ def main():
         os.mkdir("{0}".format(working_dir))
 
     # determine the length of overlap based on assembler and the largest kmer size
-    if args.assembler == "idba":
-        length = args.maxk - 1
-    else:
-        length = args.maxk
+    maxk_length = args.maxk - 1 if args.assembler == "idba" else args.maxk
 
     # write input files information to log file
     log = open("{0}/log".format(working_dir), "w")  # log file
@@ -845,7 +841,7 @@ def main():
             "# Assembler: IDBA_UD",
             "# Min-kmer: " + str(args.mink).strip(),
             "# Max-kmer: " + str(args.maxk).strip(),
-            "# Overlap length: " + str(length) + " bp",
+            "# Overlap length: " + str(maxk_length) + " bp",
             "# Read mapping max mismatches for contig linkage: "
             + str(args.linkage_mismatch),
             "# Query contigs: " + os.path.abspath(args.query),
@@ -860,7 +856,7 @@ def main():
             "# Assembler: metaSPAdes",
             "# Min-kmer: " + str(args.mink).strip(),
             "# Max-kmer: " + str(args.maxk).strip(),
-            "# Overlap length: " + str(length) + " bp",
+            "# Overlap length: " + str(maxk_length) + " bp",
             "# Read mapping max mismatches for contig linkage: "
             + str(args.linkage_mismatch),
             "# Query contigs: " + os.path.abspath(args.query),
@@ -875,7 +871,7 @@ def main():
             "# Assembler: MEGAHIT",
             "# Min-kmer: " + str(args.mink).strip(),
             "# Max-kmer: " + str(args.maxk).strip(),
-            "# Overlap length: " + str(length) + " bp",
+            "# Overlap length: " + str(maxk_length) + " bp",
             "# Read mapping max mismatches for contig linkage: "
             + str(args.linkage_mismatch),
             "# Query contigs: " + os.path.abspath(args.query),
@@ -910,13 +906,13 @@ def main():
             header2seq[header] = seq
             gc[header] = str(round(GC(seq), 3))
             header2len[header] = len(seq)
-            L[header + "_L"] = seq[0:length]  # the first x bp of left end
+            L[header + "_L"] = seq[0:maxk_length]  # the first x bp of left end
             Lrc[header + "_Lrc"] = reverse_complement(
-                seq[0:length]
+                seq[0:maxk_length]
             )  # the reverse sequence of first x bp of left end
-            R[header + "_R"] = seq[-length:]  # the first x bp of right end
+            R[header + "_R"] = seq[-maxk_length:]  # the first x bp of right end
             Rrc[header + "_Rrc"] = reverse_complement(
-                seq[-length:]
+                seq[-maxk_length:]
             )  # the reverse sequence of first x bp of right end
 
     log.write(
@@ -1718,67 +1714,71 @@ def main():
         for item in order_all[contig][:-1]:
             if item.endswith("_R") or item.endswith("_L"):
                 if last == "":
-                    a.write(header2seq[item.rsplit("_", 1)[0]][:-length])
-                    last = header2seq[item.rsplit("_", 1)[0]][-length:]
+                    a.write(header2seq[item.rsplit("_", 1)[0]][:-maxk_length])
+                    last = header2seq[item.rsplit("_", 1)[0]][-maxk_length:]
                     header2joined_seq[contig2extended_status[contig]] += header2seq[
                         item.rsplit("_", 1)[0]
-                    ][:-length]
+                    ][:-maxk_length]
                 else:
-                    if header2seq[item.rsplit("_", 1)[0]][:length] == last:
-                        a.write(header2seq[item.rsplit("_", 1)[0]][:-length])
-                        last = header2seq[item.rsplit("_", 1)[0]][-length:]
+                    if header2seq[item.rsplit("_", 1)[0]][:maxk_length] == last:
+                        a.write(header2seq[item.rsplit("_", 1)[0]][:-maxk_length])
+                        last = header2seq[item.rsplit("_", 1)[0]][-maxk_length:]
                         header2joined_seq[contig2extended_status[contig]] += header2seq[
                             item.rsplit("_", 1)[0]
-                        ][:-length]
+                        ][:-maxk_length]
                     else:
                         pass
             elif item.endswith("rc"):
                 if last == "":
                     a.write(
-                        reverse_complement(header2seq[item.rsplit("_", 1)[0]])[:-length]
+                        reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
+                            :-maxk_length
+                        ]
                     )
                     last = reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                        -length:
+                        -maxk_length:
                     ]
                     header2joined_seq[
                         contig2extended_status[contig]
                     ] += reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                        :-length
+                        :-maxk_length
                     ]
                 else:
                     if (
-                        reverse_complement(header2seq[item.rsplit("_", 1)[0]])[:length]
+                        reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
+                            :maxk_length
+                        ]
                         == last
                     ):
                         a.write(
                             reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                                :-length
+                                :-maxk_length
                             ]
                         )
                         last = reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                            -length:
+                            -maxk_length:
                         ]
                         header2joined_seq[
                             contig2extended_status[contig]
                         ] += reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                            :-length
+                            :-maxk_length
                         ]
                     else:
                         pass
             else:
                 if last == "":
-                    a.write(header2seq[contig][:-length])
-                    last = header2seq[contig][-length:]
+                    a.write(header2seq[contig][:-maxk_length])
+                    last = header2seq[contig][-maxk_length:]
                     header2joined_seq[contig2extended_status[contig]] += header2seq[
                         contig
-                    ][:-length]
+                    ][:-maxk_length]
                 else:
-                    if header2seq[contig][:length] == last:
-                        a.write(header2seq[contig][:-length])
-                        last = header2seq[contig][-length:]
+                    if header2seq[contig][:maxk_length] == last:
+                        a.write(header2seq[contig][:-maxk_length])
+                        last = header2seq[contig][-maxk_length:]
                         header2joined_seq[contig2extended_status[contig]] += header2seq[
                             contig
-                        ][:-length]
+                        ][:-maxk_length]
                     else:
                         pass
 
@@ -1843,7 +1843,7 @@ def main():
         a.close()
 
     for contig in self_circular:
-        cobraSeq2len[contig] = header2len[contig] - length
+        cobraSeq2len[contig] = header2len[contig] - maxk_length
 
         if header2len[contig] % 2 == 0:
             half = int(header2len[contig] / 2)
@@ -2011,7 +2011,6 @@ def main():
     extended_partial_fasta.close()
     extended_circular_fasta.close()
 
-    maxk_length = args.maxk - 1 if args.assembler == "idba" else args.maxk
     summary_fasta("COBRA_category_ii-a_extended_circular_unique.fasta", maxk_length)
     summary_fasta("COBRA_category_ii-b_extended_partial_unique.fasta", maxk_length)
 
@@ -2065,7 +2064,7 @@ def main():
                         contig + "_extended_circular",
                         str(
                             total_length(order_all[contig])
-                            - length * (len(order_all[contig]) - 1)
+                            - maxk_length * (len(order_all[contig]) - 1)
                         ),
                         "Circular",
                         contig_name(item),
@@ -2080,13 +2079,13 @@ def main():
                     contig2join_details[contig + "_extended_circular"].append(
                         "\t".join(contents[:])
                     )
-                    site += header2len[contig_name(item)] - length
+                    site += header2len[contig_name(item)] - maxk_length
                 else:
                     contents = [
                         contig + "_extended_circular",
                         str(
                             total_length(order_all[contig])
-                            - length * (len(order_all[contig]) - 1)
+                            - maxk_length * (len(order_all[contig]) - 1)
                         ),
                         "Circular",
                         contig_name(item) + "_rc",
@@ -2101,7 +2100,7 @@ def main():
                     contig2join_details[contig + "_extended_circular"].append(
                         "\t".join(contents[:])
                     )
-                    site += header2len[contig_name(item)] - length
+                    site += header2len[contig_name(item)] - maxk_length
 
             last = order_all[contig][-1]
             if get_direction(last) == "forward":
@@ -2109,7 +2108,7 @@ def main():
                     contig + "_extended_circular",
                     str(
                         total_length(order_all[contig])
-                        - length * (len(order_all[contig]) - 1)
+                        - maxk_length * (len(order_all[contig]) - 1)
                     ),
                     "Circular",
                     contig_name(last),
@@ -2131,7 +2130,7 @@ def main():
                     contig + "_extended_circular",
                     str(
                         total_length(order_all[contig])
-                        - length * (len(order_all[contig]) - 1)
+                        - maxk_length * (len(order_all[contig]) - 1)
                     ),
                     "Circular",
                     contig_name(last) + "_rc",
@@ -2159,7 +2158,7 @@ def main():
                         contig + "_extended_partial",
                         str(
                             total_length(order_all[contig])
-                            - length * (len(order_all[contig]) - 1)
+                            - maxk_length * (len(order_all[contig]) - 1)
                         ),
                         "Partial",
                         contig_name(item),
@@ -2174,13 +2173,13 @@ def main():
                     contig2join_details[contig + "_extended_partial"].append(
                         "\t".join(contents[:])
                     )
-                    site += header2len[contig_name(item)] - length
+                    site += header2len[contig_name(item)] - maxk_length
                 else:
                     contents = [
                         contig + "_extended_partial",
                         str(
                             total_length(order_all[contig])
-                            - length * (len(order_all[contig]) - 1)
+                            - maxk_length * (len(order_all[contig]) - 1)
                         ),
                         "Partial",
                         contig_name(item) + "_rc",
@@ -2195,7 +2194,7 @@ def main():
                     contig2join_details[contig + "_extended_partial"].append(
                         "\t".join(contents[:])
                     )
-                    site += header2len[contig_name(item)] - length
+                    site += header2len[contig_name(item)] - maxk_length
 
             last = order_all[contig][
                 -1
@@ -2205,7 +2204,7 @@ def main():
                     contig + "_extended_partial",
                     str(
                         total_length(order_all[contig])
-                        - length * (len(order_all[contig]) - 1)
+                        - maxk_length * (len(order_all[contig]) - 1)
                     ),
                     "Partial",
                     contig_name(last),
@@ -2226,7 +2225,7 @@ def main():
                     contig + "_extended_partial",
                     str(
                         total_length(order_all[contig])
-                        - length * (len(order_all[contig]) - 1)
+                        - maxk_length * (len(order_all[contig]) - 1)
                     ),
                     "Partial",
                     contig_name(last) + "_rc",
@@ -2405,7 +2404,7 @@ def main():
         assembled_info.write(
             contig
             + "\t"
-            + str(header2len[contig] - length)
+            + str(header2len[contig] - maxk_length)
             + "\t"
             + str(cov[contig])
             + "\t"
@@ -2506,4 +2505,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args)
