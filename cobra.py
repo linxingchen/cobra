@@ -25,19 +25,6 @@ else:
     from Bio.SeqUtils import GC  # type: ignore
 
 
-class COBRA_ARGS(TypedDict):
-    query: str
-    fasta: str
-    assembler: Literal["idba", "megahit", "metaspades"]
-    mink: int
-    maxk: int
-    mapping: str
-    coverage: str
-    linkage_mismatch: int
-    output: str
-    threads: int
-
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="This script is used to get higher quality (including circular) virus genomes "
@@ -801,7 +788,6 @@ def total_length(contig_list: list[str]):
 
 
 def main(
-    args,
     query_fa: str,
     assem_fa: str,
     mapping_file: str,
@@ -811,6 +797,7 @@ def main(
     assembler: Literal["idba", "megahit", "metaspades"],
     outdir: str = "",
     linkage_mismatch: int = 2,
+    threads = 1
 ):
     ##
     # get information from the input files and parameters and save information
@@ -1857,8 +1844,10 @@ def main(
     else:
         os.system("makeblastdb -in blastdb_1.fa -dbtype nucl")
         os.system(
-            "blastn -task blastn -db blastdb_1.fa -query blastdb_2.fa -out blastdb_2.vs.blastdb_1 -evalue 1e-10 "
-            "-outfmt 6 -perc_identity 70 -num_threads {0}".format(args.threads)
+            "blastn "
+            "-task blastn -db blastdb_1.fa -query blastdb_2.fa "
+            "-out blastdb_2.vs.blastdb_1 -evalue 1e-10 "
+            f"-outfmt 6 -perc_identity 70 -num_threads {threads}"
         )
 
     # parse the blastn results
@@ -2480,7 +2469,6 @@ def main(
 if __name__ == "__main__":
     args = parse_args()
     main(
-        args,
         query_fa=args.query,
         assem_fa=args.fasta,
         mapping_file=args.mapping,
@@ -2490,4 +2478,5 @@ if __name__ == "__main__":
         assembler=args.assembler,
         outdir=args.output,
         linkage_mismatch=args.linkage_mismatch,
+        threads=args.threads,
     )
