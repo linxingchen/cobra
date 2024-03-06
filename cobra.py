@@ -11,12 +11,17 @@ import itertools
 import os
 from collections import defaultdict
 from time import strftime
-from typing import Literal, TextIO, TypedDict
+from typing import Literal, TextIO
 
 import Bio
 import pysam
 from Bio import SeqIO
 from Bio.Seq import reverse_complement, Seq
+
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = iter
 
 bio_version = Bio.__version__
 if bio_version > "1.79":
@@ -112,15 +117,17 @@ def parse_args():
 #
 global one_path_end, link_pair, cov, parsed_linkage, self_circular, two_paths_end, contig2join, contig_checked, contig2join_reason, path_circular, path_circular_end, order_all, added_to_contig, header2seq, self_circular_non_expected_overlap, all_joined_query, extended_circular_query, extended_partial_query, header2len, is_subset_of
 
-#
+# collect raw contig name and seqs
+header2seq: dict[str, Seq] = {}
+header2len: dict[str, int] = {}
+
+link_pair: dict[str, list[str]] = {}  # used to save all overlaps between ends
+one_path_end: list[str] = []  # the end of contigs with one potential join
+two_paths_end: list[str] = []  # the end of contigs with two potential joins
+
 cov = {}  # the coverage of contigs
-header2seq = {}
-header2len = {}
-link_pair = {}  # used to save all overlaps between ends
 # Initialize an empty set to store the parsed linkage information
 parsed_linkage = set()
-one_path_end = []  # the end of contigs with one potential join
-two_paths_end = []  # the end of contigs with two potential joins
 self_circular = set()
 self_circular_non_expected_overlap = {}
 contig2join = {}
@@ -797,18 +804,22 @@ def main(
     assembler: Literal["idba", "megahit", "metaspades"],
     outdir: str = "",
     linkage_mismatch: int = 2,
-    threads = 1
+    threads=1,
 ):
     ##
     # get information from the input files and parameters and save information
-    # get the name of the query fasta file
-    query_name = f"{query_fa}".rsplit("/", 1)[1] if "/" in query_fa else f"{query_fa}"
-
     # get the name of the whole contigs fasta file
     fasta_name = f"{assem_fa}".rsplit("/", 1)[1] if "/" in assem_fa else f"{assem_fa}"
 
     # folder of output
-    working_dir = f"{outdir}" if outdir else f"{query_name}_COBRA"
+    if outdir:
+        working_dir = f"{outdir}"
+    else:
+        # get the name of the query fasta file
+        query_name = (
+            f"{query_fa}".rsplit("/", 1)[1] if "/" in query_fa else f"{query_fa}"
+        )
+        working_dir = f"{query_name}_COBRA"
 
     # checking if output folder exists
     if os.path.exists(working_dir):
@@ -820,7 +831,7 @@ def main(
     maxk_length = maxk - 1 if assembler == "idba" else maxk
 
     # write input files information to log file
-    log = open("{0}/log".format(working_dir), "w")  # log file
+    log = open(f"{working_dir}/log", "w")  # log file
     log.write("1. INPUT INFORMATION" + "\n")
     log.write(
         "\n".join(
@@ -829,11 +840,10 @@ def main(
                 + {"idba": "IDBA_UD", "metaspades": "metaSPAdes", "megahit": "MEGAHIT"}[
                     assembler
                 ],
-                "# Min-kmer: " + str(mink).strip(),
-                "# Max-kmer: " + str(maxk).strip(),
-                "# Overlap length: " + str(maxk_length) + " bp",
-                "# Read mapping max mismatches for contig linkage: "
-                + str(linkage_mismatch),
+                f"# Min-kmer: {mink}",
+                f"# Max-kmer: {maxk}",
+                f"# Overlap length: {maxk_length} bp",
+                f"# Read mapping max mismatches for contig linkage: {linkage_mismatch}",
                 "# Query contigs: " + os.path.abspath(query_fa),
                 "# Whole contig set: " + os.path.abspath(assem_fa),
                 "# Mapping file: " + os.path.abspath(mapping_file),
@@ -853,31 +863,35 @@ def main(
     )
     # header2seq = {}
     # header2len = {}
-    gc = {}
-    L = {}
-    R = {}
-    Lrc = {}
-    Rrc = {}
+    gc: dict[str, str] = {}  # GC for each contig, report ONLY
+    d_L: dict[Seq, set[str]] = defaultdict(set)
+    d_Lrc: dict[Seq, set[str]] = defaultdict(set)
+    d_R: dict[Seq, set[str]] = defaultdict(set)
+    d_Rrc: dict[Seq, set[str]] = defaultdict(set)
 
-    with open("{0}".format(assem_fa), "r") as f:
-        for record in SeqIO.parse(f, "fasta"):
-            header = str(record.id).strip()
-            seq = str(record.seq)
-            header2seq[header] = seq
-            gc[header] = str(round(GC(seq), 3))
-            header2len[header] = len(seq)
-            L[header + "_L"] = seq[0:maxk_length]  # the first x bp of left end
-            Lrc[header + "_Lrc"] = reverse_complement(
-                seq[0:maxk_length]
-            )  # the reverse sequence of first x bp of left end
-            R[header + "_R"] = seq[-maxk_length:]  # the first x bp of right end
-            Rrc[header + "_Rrc"] = reverse_complement(
-                seq[-maxk_length:]
-            )  # the reverse sequence of first x bp of right end
+    record: SeqIO.SeqRecord
+    for record in tqdm(SeqIO.parse(assem_fa, "fasta")):
+        header = str(record.id).strip()
+        seq: Seq = record.seq
+        header2seq[header] = seq
+        header2len[header] = len(seq)
+        gc[header] = str(round(GC(seq), 3))
+        #
+        # >contig
+        # >>>>>>>...>>>>>>>
+        # |- L ->   |- R ->
+        # <~Lrc~|   <~Rrc~|
+        # <<<<<<<***<<<<<<<
+        # the first x bp of left end
+        d_L[seq[0:maxk_length]].add(header + "_L")
+        # the reverse sequence of first x bp of left end
+        d_Lrc[seq[0:maxk_length].reverse_complement()].add(header + "_Lrc")
+        # the first x bp of right end
+        d_R[seq[-maxk_length:]].add(header + "_R")
+        # the reverse sequence of first x bp of right end
+        d_Rrc[seq[-maxk_length:].reverse_complement()].add(header + "_Rrc")
 
-    log.write(
-        "A total of {0} contigs were imported.".format(len(header2seq.keys())) + "\n"
-    )
+    log.write(f"A total of {len(header2seq)} contigs were imported.\n")
 
     ##
     # get potential joins
@@ -885,169 +899,135 @@ def main(
 
     # link_pair = {}  # used to save all overlaps between ends
 
-    d_L = defaultdict(set)
-    d_Lrc = defaultdict(set)
-    d_R = defaultdict(set)
-    d_Rrc = defaultdict(set)
-
-    for k, v in L.items():  # save header2seq in dictionary with seqs as keys
-        d_L[v].add(k)
-    for k, v in Lrc.items():
-        d_Lrc[v].add(k)
-    for k, v in R.items():
-        d_R[v].add(k)
-    for k, v in Rrc.items():
-        d_Rrc[v].add(k)
-
-    d_L_d_Lrc_shared = set(d_L.keys()).intersection(set(d_Lrc.keys()))
     # get the shared seqs between direction pairs (L/Lrc, Lrc/L, L/R, R/L, R/Rrc, Rrc/R, Lrc/Rrc, Rrc/Lrc)
-    d_L_d_R_shared = set(d_L.keys()).intersection(set(d_R.keys()))
+    #           >contig1
+    #           >>>>>>>...>>>>>>>
+    #           |- L ->
+    #           |~Lrc~>
+    # >>>>>>>***>>>>>>>
+    #             contig2<
+    # contig1_L - contig2_Lrc == contig1_Lrc - contig2_L
+    d_L_d_Lrc_shared = set(d_L) & set(d_Lrc)
+    #           >contig1
+    #           >>>>>>>...>>>>>>>
+    #           |- L ->
+    #           |- R ->
+    # >>>>>>>...>>>>>>>
+    # >contig2
+    # contig1_L - contig2_R == contig1_Lrc - contig2_Rrc
+    d_L_d_R_shared = set(d_L) & set(d_R)
     # the d_R_d_L_shared will be included below
-    d_R_d_Rrc_shared = set(d_R.keys()).intersection(set(d_Rrc.keys()))
-    d_Rrc_d_Lrc_shared = set(d_Rrc.keys()).intersection(set(d_Lrc.keys()))
-
+    # >contig1
+    # >>>>>>>...>>>>>>>
+    #           |- R ->
+    #           |~Rrc~>
+    #           >>>>>>>***>>>>>>>
+    #                    contig2<
+    # contig1_R - contig2_Rrc == contig1_Rrc - contig2_R
+    d_R_d_Rrc_shared = set(d_R) & set(d_Rrc)
+    # equals to                   |           >contig1
+    #          contig1<           |           >>>>>>>...>>>>>>>
+    # >>>>>>>***>>>>>>>           |           |- L ->
+    #           |~Lrc~>           |           |- R ->
+    #           |~Rrc~>           | >>>>>>>...>>>>>>>
+    #           >>>>>>>***>>>>>>> | >contig2
+    #                    contig2< |  the reverse_complement one
+    d_Rrc_d_Lrc_shared = set(d_Rrc) & set(d_Lrc)
     ##
     # get link_pair between ends
     for end in d_L_d_Lrc_shared:
         for left in d_L[end]:  # left is a seq name
-            for left_rc in d_Lrc[end]:  # left_rc is a seq name
-                if left not in link_pair.keys():
-                    link_pair[left] = [left_rc]
-                else:
-                    link_pair[left].append(left_rc)
+            link_pair.setdefault(left, []).extend(d_Lrc[end])
         for left_rc in d_Lrc[end]:
-            for left in d_L[end]:
-                if left_rc not in link_pair.keys():
-                    link_pair[left_rc] = [left]
-                else:
-                    link_pair[left_rc].append(left)
-
+            link_pair.setdefault(left_rc, []).extend(d_L[end])
     for end in d_L_d_R_shared:
         for left in d_L[end]:
-            for right in d_R[end]:
-                if left not in link_pair.keys():
-                    link_pair[left] = [right]
-                else:
-                    link_pair[left].append(right)
+            link_pair.setdefault(left, []).extend(d_R[end])
         for right in d_R[end]:
-            for left in d_L[end]:
-                if right not in link_pair.keys():
-                    link_pair[right] = [left]
-                else:
-                    link_pair[right].append(left)
-
+            link_pair.setdefault(right, []).extend(d_L[end])
     for end in d_R_d_Rrc_shared:
         for right in d_R[end]:
-            for right_rc in d_Rrc[end]:
-                if right not in link_pair.keys():
-                    link_pair[right] = [right_rc]
-                else:
-                    link_pair[right].append(right_rc)
+            link_pair.setdefault(right, []).extend(d_Rrc[end])
         for right_rc in d_Rrc[end]:
-            for right in d_R[end]:
-                if right_rc not in link_pair.keys():
-                    link_pair[right_rc] = [right]
-                else:
-                    link_pair[right_rc].append(right)
-
+            link_pair.setdefault(right_rc, []).extend(d_R[end])
     for end in d_Rrc_d_Lrc_shared:
         for right_rc in d_Rrc[end]:
-            for left_rc in d_Lrc[end]:
-                if right_rc not in link_pair.keys():
-                    link_pair[right_rc] = [left_rc]
-                else:
-                    link_pair[right_rc].append(left_rc)
+            link_pair.setdefault(right_rc, []).extend(d_Lrc[end])
         for left_rc in d_Lrc[end]:
-            for right_rc in d_Rrc[end]:
-                if left_rc not in link_pair.keys():
-                    link_pair[left_rc] = [right_rc]
-                else:
-                    link_pair[left_rc].append(right_rc)
+            link_pair.setdefault(left_rc, []).extend(d_Rrc[end])
 
     ##
     # save all paired links to a file
     log_info("[03/23]", "Writing contig end joining pairs.", log)
 
-    p = open("{0}/COBRA_end_joining_pairs.txt".format(working_dir), "w")
-
-    for item in link_pair.keys():
-        for point in link_pair[item]:
-            p.write(
-                item + "\t" + point + "\n"
-            )  # print link pairs into a file for check if interested
-
-        if len(link_pair[item]) == 1:  # and len(link_pair[link_pair[item][0]]) > 1:
-            one_path_end.append(
-                item
-            )  # add one joining end to a list, its pair may have one or more joins
-        elif (
-            len(link_pair[item]) == 2
-            and len(link_pair[link_pair[item][0]]) == 1
-            and len(link_pair[link_pair[item][1]]) == 1
-        ):
-            two_paths_end.append(
-                item
-            )  # add two joining end to a list, each of its pairs should only have one join
-        else:
-            pass
-    p.close()
-
+    with open(f"{working_dir}/COBRA_end_joining_pairs.txt", "w") as p:
+        counter_one_path_end, counter_two_path_end, counter_other_end = 0, 0, 0
+        for item in sorted(link_pair):
+            # print link pairs into a file for check if interested
+            p.write(item + "\t" + ("\t".join(sorted(link_pair[item]))) + "\n")
+            if len(link_pair[item]) == 1:  # and len(link_pair[link_pair[item][0]]) > 1:
+                # add one joining end to a list, its pair may have one or more joins
+                one_path_end.append(item)
+                counter_one_path_end += 1
+            elif (
+                len(link_pair[item]) == 2
+                and len(link_pair[link_pair[item][0]]) == 1
+                and len(link_pair[link_pair[item][1]]) == 1
+            ):
+                # add two joining end to a list, each of its pairs should only have one join
+                two_paths_end.append(item)
+                counter_two_path_end += 1
+            else:
+                counter_other_end += 1
+    log.write(
+        f"Found {counter_one_path_end} one path end, "
+        f"{counter_two_path_end} two path end, "
+        f"{counter_other_end} other end.\n"
+    )
     ##
     # read and save the coverage of all contigs
     log_info("[04/23]", "Getting contig coverage information.", log)
-    coverage = open("{0}".format(coverage_file), "r")
-    for line in coverage.readlines():
-        line = line.strip().split("\t")
-        cov[line[0]] = round(float(line[1]), 3)
-    coverage.close()
+    with open(f"{coverage_file}") as coverage:
+        # Sometimes will give a file with header, just ignore it once
+        for line in coverage.readlines():
+            header_cov, cov_value = line.strip().split("\t")[:2]
+            try:
+                cov[header_cov] = round(float(cov_value), 3)
+            except ValueError:
+                pass
+            break
+        for line in coverage.readlines():
+            header_cov, cov_value = line.strip().split("\t")[:2]
+            cov[header_cov] = round(float(cov_value), 3)
 
-    if len(cov.keys()) < len(header2seq.keys()):
-        print(
+    if len(cov) < len(header2seq):
+        raise ValueError(
             "Some contigs do not have coverage information. Please check. COBRA exits."
         )
-        exit()
-    else:
-        pass
 
     ##
     # open the query file and save the information
 
     log_info("[05/23]", "Getting query contig list. ", log, "")
-    query_set = set()
-    orphan_end_query = set()
-    non_orphan_end_query = set()
+    query_set: set[str] = set()
+    orphan_end_query: set[str] = set()
+    non_orphan_end_query: set[str] = set()
 
-    with open("{0}".format(query_fa), "r") as query_file:
-        if (
-            determine_file_format(query_fa) == "fasta"
-        ):  # if the query file is in fasta format
-            for record in SeqIO.parse(query_file, "fasta"):
-                header = str(record.id).strip()
-                if (
-                    header in header2seq.keys()
-                ):  # some queries may not in the whole assembly, should be rare though.
-                    query_set.add(header)
-                else:
-                    print(
-                        "Query {0} is not in your whole contig fasta file, please check!".format(
-                            header
-                        ),
-                        flush=True,
-                    )
+    with open(f"{query_fa}") as query_file:
+        # if the query file is in fasta format
+        if determine_file_format(query_fa) == "fasta":
+            query_header = (str(i.id).strip() for i in SeqIO.parse(query_file, "fasta"))
         else:  # if the query file is in text format
-            for line in query_file:
-                header = line.strip().split(" ")[0]
-                if (
-                    header in header2seq.keys()
-                ):  # some queries may not in the whole assembly, should be rare though.
-                    query_set.add(header)
-                else:
-                    print(
-                        "Query {0} is not in your whole contig fasta file, please check!".format(
-                            header
-                        ),
-                        flush=True,
-                    )
+            query_header = (line.strip().split(" ")[0] for line in query_file)
+        for header in query_header:
+            # some queries may not in the whole assembly, should be rare though.
+            if header in header2seq.keys():
+                query_set.add(header)
+            else:
+                print(
+                    f"Query {header} is not in your whole contig fasta file, please check!",
+                    flush=True,
+                )
 
     # distinguish orphan_end_query and non_orphan_end_query:
 
@@ -1062,7 +1042,8 @@ def main(
 
     #
     log.write(
-        "A total of {0} query contigs were imported.".format(len(query_set)) + "\n"
+        f"A total of {len(query_set)} query contigs were imported, "
+        f"with {len(orphan_end_query)} orphan end query.\n"
     )
     log.flush()
 
