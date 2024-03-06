@@ -11,7 +11,7 @@ import itertools
 import os
 from collections import defaultdict
 from time import strftime
-from typing import Literal, TextIO
+from typing import Callable, Literal, TextIO
 
 import Bio
 import pysam
@@ -1064,23 +1064,31 @@ def main(
         contig_spanned_by_PE_reads[contig] = defaultdict(list)
 
     with pysam.AlignmentFile(f"{mapping_file}", "rb") as map_file:
+        parse_query_name: Callable[[str], str] | None = None
         for rmap in map_file:
             if not rmap.is_unmapped and int(rmap.get_tag("NM")) <= linkage_mismatch:
                 assert rmap.query_name is not None
+                if parse_query_name is None:
+                    if rmap.query_name[-2:] in ("/1", "/2"):
+                        parse_query_name = lambda x: x[:-2]
+                    else:
+                        parse_query_name = lambda x: x
                 # mismatch should not be more than the defined threshold
                 # Check if the read and its mate map to different contigs
                 if rmap.reference_name != rmap.next_reference_name:
+                    # get name just before use it to speed up
+                    rmap_query_name = parse_query_name(rmap.query_name)
                     assert rmap.reference_name is not None
                     if header2len[rmap.reference_name] > 1000:
                         # determine if the read maps to the left or right end
-                        linkage[rmap.query_name].add(
+                        linkage[rmap_query_name].add(
                             rmap.reference_name
                             + ("_L" if rmap.reference_start <= 500 else "_R")
                         )
                     else:
                         # add both the left and right ends to the linkage
-                        linkage[rmap.query_name].add(rmap.reference_name + "_L")
-                        linkage[rmap.query_name].add(rmap.reference_name + "_R")
+                        linkage[rmap_query_name].add(rmap.reference_name + "_L")
+                        linkage[rmap_query_name].add(rmap.reference_name + "_R")
                 else:
                     # If the read and its mate map to the same contig, store the read mapped position (start)
                     if rmap.reference_name in orphan_end_query:
@@ -1090,7 +1098,7 @@ def main(
                             <= 500
                         ):
                             contig_spanned_by_PE_reads[rmap.reference_name][
-                                rmap.query_name
+                                parse_query_name(rmap.query_name)
                             ].append(rmap.reference_start)
 
     #
