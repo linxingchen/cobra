@@ -1234,11 +1234,11 @@ def main(
                     # >>>>>>>>>>>>>>......>>>>>>>>>>>>>
                     # |           | ...... |           |
                     # ^- 0        ^- 500   ^- -500     ^- -0
-                    # +++++++ ... |        |             |
-                    #         ... +++++++  |             |
+                    # +++++++ ... |        |
+                    #         ... +++++++  |
                     #   @read_i/1 .        |
-                    #             .        +++++++       |
-                    #             .        .     +++++++ |
+                    #             .        +++++++
+                    #             .        .     +++++++
                     #             .        .  @read_i/2
                     #             |--------| <- header2len[contig1] - 1000
                     #
@@ -1257,30 +1257,25 @@ def main(
         ):
             self_circular.add(contig)
 
-    debug = open("{0}/debug.txt".format(working_dir), "w")
+    debug = open(f"{working_dir}/debug.txt", "w")
 
     # for debug
-    print("self_circular", file=debug, flush=True)
-    print(self_circular, file=debug, flush=True)
+    print(f"# self_circular: {len(self_circular)}", file=debug, flush=True)
+    print(sorted(self_circular), file=debug, flush=True)
 
     # orphan end queries info
     # determine potential self_circular contigs from contigs with orphan end
 
-    min_over_len = 0
-    if assembler == "idba":
-        min_over_len = mink - 1
-    else:
-        min_over_len = mink
+    min_over_len = mink - 1 if assembler == "idba" else mink
 
     # determine if there is DTR for those query with orphan ends, if yes, assign as self_circular as well
-    for contig in orphan_end_query:
-        if contig in parsed_contig_spanned_by_PE_reads:
-            sequence = header2seq[contig]
-            end_part = sequence[-min_over_len:]
-            if sequence.count(end_part) == 2:
-                expected_end = sequence.split(end_part)[0] + end_part
-                if sequence.endswith(expected_end):
-                    self_circular_non_expected_overlap[contig] = len(expected_end)
+    for contig in parsed_contig_spanned_by_PE_reads:
+        sequence = header2seq[contig]
+        end_part = sequence[-min_over_len:]
+        if sequence.count(end_part) == 2:
+            expected_end = sequence.split(end_part)[0] + end_part
+            if sequence.endswith(expected_end):
+                self_circular_non_expected_overlap[contig] = len(expected_end)
 
     for contig in self_circular_non_expected_overlap:
         orphan_end_query.remove(contig)
