@@ -11,7 +11,9 @@ import itertools
 import os
 from collections import defaultdict
 from time import strftime
-from typing import Callable, Literal, TextIO
+from typing import Callable, Iterable, Literal, TextIO, TypeVar
+
+T = TypeVar("T")
 
 import Bio
 import pysam
@@ -21,7 +23,10 @@ from Bio.Seq import reverse_complement, Seq
 try:
     from tqdm import tqdm
 except ImportError:
-    tqdm = iter
+
+    def tqdm(__object: Iterable[T], *nargs, **kwargs) -> Iterable[T]:
+        return iter(__object)
+
 
 bio_version = Bio.__version__
 if bio_version > "1.79":
@@ -95,6 +100,14 @@ def parse_args():
         help="the max read mapping mismatches for "
         "determining if two contigs are spanned by "
         "paired reads. [2]",
+    )
+    parser.add_argument(
+        "-tr",
+        "--trim_readno",
+        type=str,
+        choices=["no", "trim", "auto"],
+        default="no",
+        help='whether trim the suffix `/1` and `/2` that distinguish paired reads or not ["no"]',
     )
     parser.add_argument(
         "-o",
@@ -803,6 +816,7 @@ def main(
     maxk: int,
     mink: int,
     assembler: Literal["idba", "megahit", "metaspades"],
+    trim_readno: Literal["no", "trim", "auto"],
     outdir: str = "",
     linkage_mismatch: int = 2,
     threads=1,
@@ -963,9 +977,7 @@ def main(
 
     with open(f"{working_dir}/COBRA_end_joining_pairs.txt", "w") as p:
         counter_one_path_end, counter_two_path_end, counter_other_end = 0, 0, 0
-        for item in sorted(link_pair):
-            # print link pairs into a file for check if interested
-            p.write(item + "\t" + ("\t".join(sorted(link_pair[item]))) + "\n")
+        for item in tqdm(sorted(link_pair)):
             if len(link_pair[item]) == 1:  # and len(link_pair[link_pair[item][0]]) > 1:
                 # add one joining end to a list, its pair may have one or more joins
                 one_path_end.append(item)
@@ -980,6 +992,8 @@ def main(
                 counter_two_path_end += 1
             else:
                 counter_other_end += 1
+            # print link pairs into a file for check if interested
+            p.write(item + "\t" + ("\t".join(sorted(link_pair[item]))) + "\n")
     log.write(
         f"Found {counter_one_path_end} one path end, "
         f"{counter_two_path_end} two path end, "
@@ -1011,8 +1025,6 @@ def main(
 
     log_info("[05/23]", "Getting query contig list. ", log, "")
     query_set: set[str] = set()
-    orphan_end_query: set[str] = set()
-    non_orphan_end_query: set[str] = set()
 
     with open(f"{query_fa}") as query_file:
         # if the query file is in fasta format
@@ -1031,6 +1043,8 @@ def main(
                 )
 
     # distinguish orphan_end_query and non_orphan_end_query:
+    orphan_end_query: set[str] = set()
+    non_orphan_end_query: set[str] = set()
     for header in query_set:
         if (
             header + "_L" not in link_pair.keys()
@@ -1057,22 +1071,28 @@ def main(
     # Initialize a defaultdict to store linked contigs
     linkage: dict[str, set[str]] = defaultdict(set)
     # Initialize a dictionary to store paired-end reads spanning contigs
-    contig_spanned_by_PE_reads: dict[str, dict[str, list[int]]] = {}
+    # Create a defaultdict(list) for each contig in header2seq, orphan_end first
+    contig_spanned_by_PE_reads: dict[str, dict[str, list[int]]] = {
+        contig: defaultdict(list) for contig in orphan_end_query
+    }
 
-    for contig in orphan_end_query:
-        # Create a defaultdict(list) for each contig in header2seq
-        contig_spanned_by_PE_reads[contig] = defaultdict(list)
+    if trim_readno == "auto":
+        with pysam.AlignmentFile(f"{mapping_file}", "rb") as map_file:
+            for rmap in tqdm(map_file):
+                if rmap.query_name is not None:
+                    if rmap.query_name[-2:] in ("/1", "/2"):
+                        trim_readno = "trim"
+                    else:
+                        trim_readno = "no"
+                    break
+    parse_query_name: Callable[[str], str] = (
+        (lambda x: x) if trim_readno == "no" else lambda x: x[:-2]
+    )
 
     with pysam.AlignmentFile(f"{mapping_file}", "rb") as map_file:
-        parse_query_name: Callable[[str], str] | None = None
-        for rmap in map_file:
+        for rmap in tqdm(map_file):
             if not rmap.is_unmapped and int(rmap.get_tag("NM")) <= linkage_mismatch:
                 assert rmap.query_name is not None
-                if parse_query_name is None:
-                    if rmap.query_name[-2:] in ("/1", "/2"):
-                        parse_query_name = lambda x: x[:-2]
-                    else:
-                        parse_query_name = lambda x: x
                 # mismatch should not be more than the defined threshold
                 # Check if the read and its mate map to different contigs
                 if rmap.reference_name != rmap.next_reference_name:
@@ -2444,6 +2464,7 @@ if __name__ == "__main__":
         maxk=args.maxk,
         mink=args.mink,
         assembler=args.assembler,
+        trim_readno=args.trim_readno,
         outdir=args.output,
         linkage_mismatch=args.linkage_mismatch,
         threads=args.threads,
