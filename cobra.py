@@ -135,14 +135,14 @@ header2seq: dict[str, Seq] = {}
 header2len: dict[str, int] = {}
 
 link_pair: dict[str, list[str]] = {}  # used to save all overlaps between ends
-one_path_end: list[str] = []  # the end of contigs with one potential join
-two_paths_end: list[str] = []  # the end of contigs with two potential joins
+one_path_end: set[str] = set()  # the end of contigs with one potential join
+two_paths_end: set[str] = set()  # the end of contigs with two potential joins
 
 # Initialize an empty set to store the parsed linkage information
 parsed_linkage: set[tuple[str, str]] = set()
+self_circular: set[str] = set()
 
 cov = {}  # the coverage of contigs
-self_circular = set()
 self_circular_non_expected_overlap = {}
 contig2join = {}
 contig_checked = {}
@@ -383,7 +383,12 @@ def not_checked(end_list, checked):
     return total_checked == 0
 
 
-def detect_self_circular(contig):
+def detect_self_circular(
+    contig: str,
+    one_path_end: set[str],
+    two_paths_end: set[str],
+    link_pair: dict[str, list[str]],
+):
     """
     to determine the input sequences if they are self_circular genomes or not
     """
@@ -391,19 +396,30 @@ def detect_self_circular(contig):
     if end in one_path_end:
         if link_pair[end][0] == contig + "_R":
             # the other end could be joined with the current working end
-            self_circular.add(contig)
-        else:
-            pass
+            #           >contig
+            #           |----->...|----->
+            #           |- L ->
+            #           |- R ->
+            # |----->...|----->
+            # >contig
+            #           |----->.*.*.*
+            #           >other contigs ends with `|----->` <
+            #
+            return "one_path_end"
     elif end in two_paths_end:
-        if link_pair[end][0].rsplit("_", 1)[0] != link_pair[end][1].rsplit("_", 1)[0]:
-            if contig + "_R" in link_pair[end]:
-                self_circular.add(contig)
-            else:
-                pass
-        else:
-            pass
-    else:
-        pass
+        if contig + "_R" in link_pair[end]:
+            # the other end could be joined with the current working end
+            #           >contig
+            #           |----->...|----->
+            #           |- L ->
+            #           |- R ->
+            # |----->...|----->
+            # >contig
+            # |----->...|----->
+            # >the other contig ends with `|----->` <
+            #
+            return "two_paths_end"
+    return ""
 
 
 def join_walker(contig, direction):
@@ -719,7 +735,7 @@ def summary_fasta(fasta_file: str, length: int):
     """
     summary basic information of a fasta file
     """
-    summary_file = open("{0}.summary.txt".format(fasta_file), "w")
+    summary_file = open(f"{fasta_file}.summary.txt", "w")
     summary_file_headers = ["SeqID", "Length", "Coverage", "GC", "Ns"]
     if "self_circular" in fasta_file:
         summary_file_headers.append("DTR_length")
@@ -785,9 +801,7 @@ def summarize(contig: str):
         exteneded = "Extended_circular"
     elif contig in extended_partial_query:
         exteneded = "Extended_partial"
-    return "\t".join(
-        [str(b), e, str(c), str(d), str(d - header2len[contig]), exteneded]
-    )
+    return b, e, c, d, d - header2len[contig], exteneded
 
 
 def get_direction(item: str):
@@ -885,7 +899,10 @@ def main(
     d_Rrc: dict[Seq, set[str]] = defaultdict(set)
 
     record: SeqIO.SeqRecord
-    for record in tqdm(SeqIO.parse(assem_fa, "fasta")):
+    for record in tqdm(
+        SeqIO.parse(assem_fa, "fasta"),
+        desc="Reading contigs and getting the contig end sequences",
+    ):
         header = str(record.id).strip()
         seq: Seq = record.seq
         header2seq[header] = seq
@@ -898,9 +915,9 @@ def main(
         # <~Lrc~|   <~Rrc~|
         # <<<<<<<***<<<<<<<
         # the first x bp of left end
-        d_L[seq[0:maxk_length]].add(header + "_L")
+        d_L[seq[:maxk_length]].add(header + "_L")
         # the reverse sequence of first x bp of left end
-        d_Lrc[seq[0:maxk_length].reverse_complement()].add(header + "_Lrc")
+        d_Lrc[seq[:maxk_length].reverse_complement()].add(header + "_Lrc")
         # the first x bp of right end
         d_R[seq[-maxk_length:]].add(header + "_R")
         # the reverse sequence of first x bp of right end
@@ -911,8 +928,6 @@ def main(
     ##
     # get potential joins
     log_info("[02/23]", "Getting shared contig ends.", log)
-
-    # link_pair = {}  # used to save all overlaps between ends
 
     # get the shared seqs between direction pairs (L/Lrc, Lrc/L, L/R, R/L, R/Rrc, Rrc/R, Lrc/Rrc, Rrc/Lrc)
     #           >contig1
@@ -950,6 +965,7 @@ def main(
     d_Rrc_d_Lrc_shared = set(d_Rrc) & set(d_Lrc)
     ##
     # get link_pair between ends
+    # link_pair = {}  # used to save all overlaps between ends
     for end in d_L_d_Lrc_shared:
         for left in d_L[end]:  # left is a seq name
             link_pair.setdefault(left, []).extend(d_Lrc[end])
@@ -975,20 +991,41 @@ def main(
     # save all paired links to a file
     log_info("[03/23]", "Writing contig end joining pairs.", log)
 
+    # one_path_end = []
+    # two_paths_end = []
     with open(f"{working_dir}/COBRA_end_joining_pairs.txt", "w") as p:
         counter_one_path_end, counter_two_path_end, counter_other_end = 0, 0, 0
-        for item in tqdm(sorted(link_pair)):
+        for item in tqdm(
+            sorted(link_pair), desc="Collect one_path_end and two_path_end"
+        ):
             if len(link_pair[item]) == 1:  # and len(link_pair[link_pair[item][0]]) > 1:
+                # | >contig3 or more contigs ends with `|----->` < |
+                # |  .*.*.*|----->                                 |
+                #   >contig1<
+                #    .*.*.*|----->
+                #          |----->.*.*.*
+                #               >contig2<
+                # |        no more contigs starts with `|----->` < |
+                #
                 # add one joining end to a list, its pair may have one or more joins
-                one_path_end.append(item)
+                one_path_end.add(item)
                 counter_one_path_end += 1
             elif (
                 len(link_pair[item]) == 2
                 and len(link_pair[link_pair[item][0]]) == 1
                 and len(link_pair[link_pair[item][1]]) == 1
             ):
+                # |          no more contigs ends with `|----->` < |
+                #   >contig1<
+                #    .*.*.*|----->
+                #          |----->.*.*.*
+                #               >contig2<
+                #          |----->.*.*.*
+                #               >contig3<
+                # |        no more contigs starts with `|----->` < |
+                #
                 # add two joining end to a list, each of its pairs should only have one join
-                two_paths_end.append(item)
+                two_paths_end.add(item)
                 counter_two_path_end += 1
             else:
                 counter_other_end += 1
@@ -1101,17 +1138,50 @@ def main(
                     assert rmap.reference_name is not None
                     if header2len[rmap.reference_name] > 1000:
                         # determine if the read maps to the left or right end
+                        # >contig1
+                        # >>>>>>>>>>>>>>>>>>>>>>>>...>
+                        # |           |           |
+                        # ^- 0        ^- 500      ^- 1000
+                        # +++++++ ... |              .       | linkage[read_i].add(contig1_L)
+                        #         ... +++++++        .       | linkage[read_i].add(contig1_L)
+                        #             |+++++++  ...  |       | linkage[read_i].add(contig1_R)
+                        #                       ...  +++++++ | linkage[read_i].add(contig1_R)
+                        # @read_i
+                        #
                         linkage[rmap_query_name].add(
                             rmap.reference_name
                             + ("_L" if rmap.reference_start <= 500 else "_R")
                         )
                     else:
+                        # >contig1
+                        # >>>>>>>>>>>>>>>>>>>>...>
+                        # |           |           |
+                        # ^- 0        ^- 500      ^- 1000
+                        # +++++++   ...           | linkage[read_i].add(contig1_L, contig1_R)
+                        #           ...   +++++++ | linkage[read_i].add(contig1_L, contig1_R)
+                        # @read_i
+                        #
                         # add both the left and right ends to the linkage
                         linkage[rmap_query_name].add(rmap.reference_name + "_L")
                         linkage[rmap_query_name].add(rmap.reference_name + "_R")
                 else:
                     # If the read and its mate map to the same contig, store the read mapped position (start)
                     if rmap.reference_name in orphan_end_query:
+                        # >contig1, normally > 1000 bp
+                        # >>>>>>>>>>>>>>......>>>>>>>>>>>>>
+                        # |           | ...... |           |
+                        # ^- 0        ^- 500   ^- -500     ^- -0
+                        # +++++++ ... |        .             | contig_spanned_by_PE_reads[contig1][read_i].append(0)
+                        #         ... +++++++  .             | contig_spanned_by_PE_reads[contig1][read_i].append(499)
+                        #             |+++++++ |             |
+                        #                      +++++++       |
+                        #                       +++++++      | contig_spanned_by_PE_reads[contig1][read_i].append(-500)
+                        # @read_i/1
+                        #               +++++++
+                        #               @read_i/2
+                        #
+                        # add both the left and right ends to the linkage
+                        # only care about those in query
                         if (
                             rmap.reference_start <= 500
                             or header2len[rmap.reference_name] - rmap.reference_start
@@ -1124,9 +1194,9 @@ def main(
     #
     log_info("[07/23]", "Parsing the linkage information.", log)
 
-    for read in linkage:
+    for read in tqdm(linkage, desc="Parsing the linkage information"):
+        # len(linkage[read]) in (1, 2, 3, 4)
         if len(linkage[read]) >= 2:  # Process only reads linked to at least two contigs
-            # for item in linkage[read]:
             for item, item_1 in itertools.combinations(linkage[read], 2):
                 # Generate unique pairs of linked contigs for the current read using itertools.combinations
                 if item.rsplit("_", 1)[1] != item_1.rsplit("_", 1)[1]:
@@ -1137,6 +1207,7 @@ def main(
                     parsed_linkage.add((item_1 + "rc", item + "rc"))
                 else:
                     # If the contigs have the same ends, add the combinations with reverse-complement (_rc) to the parsed_linkage
+                    # Warning: contigs <= 1000 bp will be linked to it self: (contig1_L, contig1_Rrc) etc.
                     parsed_linkage.add((item, item_1 + "rc"))
                     parsed_linkage.add((item_1 + "rc", item))
                     parsed_linkage.add((item + "rc", item_1))
@@ -1159,14 +1230,32 @@ def main(
                     )
                     >= header2len[contig] - 1000
                 ):
+                    # >contig1, normally > 1000 bp
+                    # >>>>>>>>>>>>>>......>>>>>>>>>>>>>
+                    # |           | ...... |           |
+                    # ^- 0        ^- 500   ^- -500     ^- -0
+                    # +++++++ ... |        |             |
+                    #         ... +++++++  |             |
+                    #   @read_i/1 .        |
+                    #             .        +++++++       |
+                    #             .        .     +++++++ |
+                    #             .        .  @read_i/2
+                    #             |--------| <- header2len[contig1] - 1000
+                    #
                     parsed_contig_spanned_by_PE_reads.add(contig)
 
     ##
-    #
     log_info("[08/23]", "Detecting self_circular contigs. ", log)
 
-    for contig in non_orphan_end_query:
-        detect_self_circular(contig)
+    # self_circular = set()
+    for contig in tqdm(non_orphan_end_query, desc="Detecting self_circular contigs."):
+        if detect_self_circular(
+            contig,
+            one_path_end=one_path_end,
+            two_paths_end=two_paths_end,
+            link_pair=link_pair,
+        ):
+            self_circular.add(contig)
 
     debug = open("{0}/debug.txt".format(working_dir), "w")
 
@@ -2234,7 +2323,7 @@ def main(
                     [
                         contig,
                         str(header2len[contig]),
-                        summarize(contig),
+                        *(str(i) for i in summarize(contig)),
                         query2current[contig],
                     ]
                 )
