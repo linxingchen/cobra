@@ -141,12 +141,13 @@ two_paths_end: set[str] = set()  # the end of contigs with two potential joins
 # Initialize an empty set to store the parsed linkage information
 parsed_linkage: set[tuple[str, str]] = set()
 self_circular: set[str] = set()
+self_circular_non_expected_overlap: dict[str, int] = {}
+
+contig2join = {}
+contig_checked: dict[str, list[str]] = {}
+contig2join_reason: dict[str, dict[str, str]] = {}
 
 cov = {}  # the coverage of contigs
-self_circular_non_expected_overlap = {}
-contig2join = {}
-contig_checked = {}
-contig2join_reason = {}
 path_circular_end = set()
 path_circular = set()
 is_subset_of = {}
@@ -207,45 +208,63 @@ def get_target(item: str):
         return base_name + "_R"
 
 
-def are_equal_paths(two_paths):
+def are_equal_paths(path1: str, path2: str):
     """
     evaluate if two paths are equal, two_paths is a list including two ends, e.g., a_L, b_R
     """
-    if two_paths[0].rsplit("_", 1)[1].startswith("L") and two_paths[1].rsplit("_", 1)[
-        1
-    ].startswith("R"):
+    path1_is_L = path1.rsplit("_", 1)[1].startswith("L")
+    path2_is_L = path2.rsplit("_", 1)[1].startswith("L")
+    if path1_is_L and (not path2_is_L):
+        # >contig<
+        #        |-end-|
+        #  .*.*.*|----->
+        #                    |           | exactly one contigs starts with |-R_2->
+        #        |- L ->...  |           |-R_2->.*.*.*
+        #        >contig2    | >contig2
+        #        |~Rrc~>***  | |-L_2->...|-R_2->
+        #          contig3<  |             contig3<
+        #                    | <-R_3-|   ...<-L_3-|
+        #                    |              <-L_3-|*.*.*.
+        #                    |              | exactly one contigs starts with <-L_3-|
+        # Expect <-L_3-| == reverse_complement(|-R_2->) inherent there are the same terminal of the same contig
+        #
         return (
-            contig_name(two_paths[0]) + "_R" in one_path_end
-            and contig_name(two_paths[1]) + "_L" in one_path_end
-            and contig_name(link_pair[contig_name(two_paths[0]) + "_R"][0])
-            == contig_name(link_pair[contig_name(two_paths[1]) + "_L"][0])
+            len(path1_R_pair := link_pair[contig_name(path1) + "_R"]) == 1
+            and len(path2_L_pair := link_pair[contig_name(path2) + "_L"]) == 1
+            and contig_name(path1_R_pair[0]) == contig_name(path2_L_pair[0])
         )
-    elif two_paths[0].rsplit("_", 1)[1].startswith("R") and two_paths[1].rsplit("_", 1)[
-        1
-    ].startswith("L"):
+    elif (not path1_is_L) and path2_is_L:
+        # >contig<
+        #        |-end-|
+        #  .*.*.*|----->
+        #                    |              | exactly one contigs starts with <-L_2-|
+        #        |~Rrc~>***  |              <-L_2-|*.*.*.
+        #          contig2<  |             contig2<
+        #        |- L ->...  | <-R_2-|   ...<-L_2-|
+        #        >contig3    | >contig3
+        #                    | |-L_3->...|-R_3->
+        #                    |           |-R_3->.*.*.*
+        #                    |           | exactly one contigs starts with |-R_3->
+        # Expect <-L_2-| == reverse_complement(|-R_2->) inherent there are the same terminal of the same contig
+        #
         return (
-            contig_name(two_paths[0]) + "_L" in one_path_end
-            and contig_name(two_paths[1]) + "_R" in one_path_end
-            and contig_name(link_pair[contig_name(two_paths[0]) + "_L"][0])
-            == contig_name(link_pair[contig_name(two_paths[1]) + "_R"][0])
+            len(path1_nR_pair := link_pair[contig_name(path1) + "_L"]) == 1
+            and len(path2_nL_pair := link_pair[contig_name(path2) + "_R"]) == 1
+            and contig_name(path1_nR_pair[0]) == contig_name(path2_nL_pair[0])
         )
-    elif two_paths[0].rsplit("_", 1)[1].startswith("R") and two_paths[1].rsplit("_", 1)[
-        1
-    ].startswith("R"):
+    elif (not path1_is_L) and (not path2_is_L):
         return (
-            contig_name(two_paths[0]) + "_L" in one_path_end
-            and contig_name(two_paths[1]) + "_L" in one_path_end
-            and contig_name(link_pair[contig_name(two_paths[0]) + "_L"][0])
-            == contig_name(link_pair[contig_name(two_paths[1]) + "_L"][0])
+            contig_name(path1) + "_L" in one_path_end
+            and contig_name(path2) + "_L" in one_path_end
+            and contig_name(link_pair[contig_name(path1) + "_L"][0])
+            == contig_name(link_pair[contig_name(path2) + "_L"][0])
         )
-    elif two_paths[0].rsplit("_", 1)[1].startswith("L") and two_paths[1].rsplit("_", 1)[
-        1
-    ].startswith("L"):
+    elif path1_is_L and path2_is_L:
         return (
-            contig_name(two_paths[0]) + "_R" in one_path_end
-            and contig_name(two_paths[1]) + "_R" in one_path_end
-            and contig_name(link_pair[contig_name(two_paths[0]) + "_R"][0])
-            == contig_name(link_pair[contig_name(two_paths[1]) + "_R"][0])
+            contig_name(path1) + "_R" in one_path_end
+            and contig_name(path2) + "_R" in one_path_end
+            and contig_name(link_pair[contig_name(path1) + "_R"][0])
+            == contig_name(link_pair[contig_name(path2) + "_R"][0])
         )
     else:
         return False
@@ -418,7 +437,10 @@ def detect_self_circular(
             # |----->...|----->
             # >the other contig ends with `|----->` <
             #
-            if link_pair[end][0].rsplit("_", 1)[0] == link_pair[end][1].rsplit("_", 1)[0]:
+            if (
+                link_pair[end][0].rsplit("_", 1)[0]
+                == link_pair[end][1].rsplit("_", 1)[0]
+            ):
                 #           >contig
                 #           |----->...|----->
                 #           |- L ->
@@ -427,20 +449,23 @@ def detect_self_circular(
                 #                     contig< | FIXME: Why this happened?
                 #           |~Rrc~>...|~Lrc~> |
                 # |~Rrc~>...|~Lrc~>           |
-                print("Warning: Unexpected self-multipile circular: ", contig, flush=True)
+                print(
+                    "Warning: Unexpected self-multipile circular: ", contig, flush=True
+                )
                 print("       : from", end, "to", link_pair[end], flush=True)
                 return ""
             return "two_paths_end"
     return ""
 
 
-def join_walker(contig, direction):
+def join_walker(contig: str, direction: Literal["L", "R"]):
     """
     get potential joins for a given query
     """
-    global contig2join, contig_checked, contig2join_reason, path_circular, path_circular_end
+    global contig2join, contig_checked, contig2join_reason
+    global path_circular, path_circular_end
 
-    end = contig + "_" + direction
+    end = f"{contig}_{direction}"
     a = len(contig2join[end])
     if a == 0:
         contig_checked[end].append(contig)
@@ -466,16 +491,21 @@ def join_walker(contig, direction):
                     contig2join_reason[contig][
                         contig_name(link_pair[end][0])
                     ] = "is_ok_to_add"
-                else:
-                    pass
-            else:
-                pass
         elif end in two_paths_end:
+            # >contig<
+            #        |-end-|
+            #  .*.*.*|----->
+            #        |----->.*.*.*
+            #             >contig2<
+            #        |----->.*.*.*
+            #             >contig3<
+            # no more contigs starts with `|----->`
+            #
             if (
                 link_pair[end][0].rsplit("_", 1)[0]
                 != link_pair[end][1].rsplit("_", 1)[0]
             ):
-                if are_equal_paths(link_pair[end]):
+                if are_equal_paths(*link_pair[end]):
                     if (
                         contig_name(the_dominant_one(link_pair[end]))
                         not in self_circular
@@ -486,8 +516,6 @@ def join_walker(contig, direction):
                         contig2join_reason[contig][
                             contig_name(the_dominant_one(link_pair[end]))
                         ] = "are_equal_paths"
-                    else:
-                        pass
                 else:
                     if (
                         cov[contig_name(link_pair[end][0])]
@@ -507,14 +535,6 @@ def join_walker(contig, direction):
                             contig2join_reason[contig][
                                 contig_name(the_better_one(link_pair[end], contig))
                             ] = "the_better_one"
-                        else:
-                            pass
-                    else:
-                        pass
-            else:
-                pass
-        else:
-            pass
     else:
         target = get_target(contig2join[end][-1])
         if target in one_path_end:
@@ -555,7 +575,7 @@ def join_walker(contig, direction):
                     pass
                 else:
                     if not_checked(link_pair[target], contig_checked[end]):
-                        if are_equal_paths(link_pair[target]):
+                        if are_equal_paths(*link_pair[target]):
                             if (
                                 contig_name(the_dominant_one(link_pair[target]))
                                 not in self_circular
@@ -768,7 +788,7 @@ def summary_fasta(fasta_file: str, length: int):
         if header.split("_self")[0] in self_circular:
             sequence_stats[2] = str(cov[header.split("_self")[0]])
             sequence_stats.append(str(length))
-        elif header.split("_self")[0] in self_circular_non_expected_overlap.keys():
+        elif header.split("_self")[0] in self_circular_non_expected_overlap:
             sequence_stats[2] = str(cov[header.split("_self")[0]])
             sequence_stats.append(
                 str(self_circular_non_expected_overlap[header.split("_self")[0]])
@@ -1281,63 +1301,48 @@ def main(
     min_over_len = mink - 1 if assembler == "idba" else mink
 
     # determine if there is DTR for those query with orphan ends, if yes, assign as self_circular as well
+    # self_circular_non_expected_overlap = {}
     for contig in parsed_contig_spanned_by_PE_reads:
         sequence = header2seq[contig]
         end_part = sequence[-min_over_len:]
-        if sequence.count(end_part) == 2:
-            expected_end = sequence.split(end_part)[0] + end_part
+        if sequence.count(end_part) > 1:
+            if sequence.count(end_part) > 2:
+                print(contig)
+            expected_end = sequence.split(end_part, 1)[0] + end_part
             if sequence.endswith(expected_end):
                 self_circular_non_expected_overlap[contig] = len(expected_end)
 
-    for contig in self_circular_non_expected_overlap:
-        orphan_end_query.remove(contig)
+    # orphan_end_query_1 = orphan_end_query
+    orphan_end_query = orphan_end_query - self_circular_non_expected_overlap.keys()
 
     # debug
-    print(self_circular_non_expected_overlap, file=debug, flush=True)
+    print(
+        f"# self_circular_non_expected_overlap: {len(self_circular_non_expected_overlap)}",
+        file=debug,
+        flush=True,
+    )
+    print(sorted(self_circular_non_expected_overlap), file=debug, flush=True)
 
     ##
     # walk the joins
     log_info("[09/23]", "Detecting joins of contigs. ", log)
 
+    # contig2join = {}
+    # contig_checked = {}
+    # contig2join_reason = {}
     for contig in query_set:
         contig2join[contig + "_L"] = []
         contig2join[contig + "_R"] = []
         contig_checked[contig + "_L"] = []
         contig_checked[contig + "_R"] = []
-        contig2join_reason[contig] = {}
-        contig2join_reason[contig][contig] = "query"
+        contig2join_reason[contig] = {contig: "query"}
 
-    percentage = [10, 20, 30, 40, 50, 60, 70, 80, 90]
-    finished_join_walker = 0
-    total_join_walker = len(query_set) - len(orphan_end_query) - len(self_circular)
+    for contig in tqdm(query_set - (orphan_end_query | self_circular)):
+        # extend each contig from both directions
+        while result_L := join_walker(contig, "L"):
+            pass
 
-    #
-    for contig in query_set:
-        if contig not in list(orphan_end_query) + list(self_circular):
-
-            # extend each contig from both directions
-            while True:
-                result_L = join_walker(contig, "L")
-                if not result_L:
-                    break
-
-            while True:
-                result_R = join_walker(contig, "R")
-                if not result_R:
-                    break
-
-            # calculate the percentage of query contigs have been checked for extension
-            finished_join_walker += 1
-            finished_percentage = int(finished_join_walker / total_join_walker * 100)
-
-            if finished_percentage in percentage:
-                log.write(str(finished_percentage) + "%, ")
-                log.flush()
-                percentage.remove(finished_percentage)
-            else:
-                pass
-
-        else:
+        while result_R := join_walker(contig, "R"):
             pass
 
     ##
@@ -1588,7 +1593,7 @@ def main(
                         contig not in failed_join_list
                         and contig not in orphan_end_query
                         and contig not in self_circular
-                        and contig not in self_circular_non_expected_overlap.keys()
+                        and contig not in self_circular_non_expected_overlap
                     ):
                         extended_partial_query.add(contig)
                     else:
@@ -1899,7 +1904,7 @@ def main(
         blastdb_2.write(">" + contig + "_2" + "\n")
         blastdb_2.write(header2seq[contig][half:] + "\n")
 
-    for contig in self_circular_non_expected_overlap.keys():
+    for contig in self_circular_non_expected_overlap:
         cobraSeq2len[contig] = (
             header2len[contig] - self_circular_non_expected_overlap[contig]
         )
@@ -1985,7 +1990,7 @@ def main(
             elif contig in self_circular:
                 self_circular.remove(contig)
                 failed_join_list.append(contig)
-            elif contig in self_circular_non_expected_overlap.keys():
+            elif contig in self_circular_non_expected_overlap:
                 del self_circular_non_expected_overlap[contig]
                 failed_join_list.append(contig)
             else:
