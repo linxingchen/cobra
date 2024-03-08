@@ -418,6 +418,18 @@ def detect_self_circular(
             # |----->...|----->
             # >the other contig ends with `|----->` <
             #
+            if link_pair[end][0].rsplit("_", 1)[0] == link_pair[end][1].rsplit("_", 1)[0]:
+                #           >contig
+                #           |----->...|----->
+                #           |- L ->
+                #           |- R ->
+                # |----->...|----->
+                #                     contig< | FIXME: Why this happened?
+                #           |~Rrc~>...|~Lrc~> |
+                # |~Rrc~>...|~Lrc~>           |
+                print("Warning: Unexpected self-multipile circular: ", contig, flush=True)
+                print("       : from", end, "to", link_pair[end], flush=True)
+                return ""
             return "two_paths_end"
     return ""
 
