@@ -134,7 +134,8 @@ global one_path_end, link_pair, cov, parsed_linkage, self_circular, two_paths_en
 header2seq: dict[str, Seq] = {}
 header2len: dict[str, int] = {}
 
-link_pair: dict[str, list[str]] = {}  # used to save all overlaps between ends
+# used to save all overlaps between ends
+link_pair: dict[str, list[str]] = defaultdict(list)
 one_path_end: set[str] = set()  # the end of contigs with one potential join
 two_paths_end: set[str] = set()  # the end of contigs with two potential joins
 
@@ -212,62 +213,32 @@ def are_equal_paths(path1: str, path2: str):
     """
     evaluate if two paths are equal, two_paths is a list including two ends, e.g., a_L, b_R
     """
+    # >contig<
+    #        |-end-|
+    #  .*.*.*|----->
+    # path1, path2      |           | exactly one contigs starts with |-R_2->    |
+    #        |- L ->... |           |-R_2->.*.*.*                                |
+    #        >contig2   | >contig2                                               |
+    #        |~Rrc~>*** | |-L_2->...|-R_2->                                      |
+    #          contig3< |             contig3<                                   |
+    #                   | <-R_3-|   ...<-L_3-|                                   |
+    #                   |              <-L_3-|*.*.*.                             |
+    #                   |              | exactly one contigs starts with <-L_3-| |
+    # Expect <-L_3-| == reverse_complement(|-R_2->) inherent there are the same terminal of the same contig
+    # path1: |- L -> or |~Rrc~>
+    # path2: |- L -> or |~Rrc~>
+    # if |- L ->: just look for pair of |- R ->
+    # if |~Rrc~>: just look for pair of |~Lrc~>, equivalent to pair for |- L ->
+    #
     path1_is_L = path1.rsplit("_", 1)[1].startswith("L")
     path2_is_L = path2.rsplit("_", 1)[1].startswith("L")
-    if path1_is_L and (not path2_is_L):
-        # >contig<
-        #        |-end-|
-        #  .*.*.*|----->
-        #                    |           | exactly one contigs starts with |-R_2->
-        #        |- L ->...  |           |-R_2->.*.*.*
-        #        >contig2    | >contig2
-        #        |~Rrc~>***  | |-L_2->...|-R_2->
-        #          contig3<  |             contig3<
-        #                    | <-R_3-|   ...<-L_3-|
-        #                    |              <-L_3-|*.*.*.
-        #                    |              | exactly one contigs starts with <-L_3-|
-        # Expect <-L_3-| == reverse_complement(|-R_2->) inherent there are the same terminal of the same contig
-        #
-        return (
-            len(path1_R_pair := link_pair[contig_name(path1) + "_R"]) == 1
-            and len(path2_L_pair := link_pair[contig_name(path2) + "_L"]) == 1
-            and contig_name(path1_R_pair[0]) == contig_name(path2_L_pair[0])
-        )
-    elif (not path1_is_L) and path2_is_L:
-        # >contig<
-        #        |-end-|
-        #  .*.*.*|----->
-        #                    |              | exactly one contigs starts with <-L_2-|
-        #        |~Rrc~>***  |              <-L_2-|*.*.*.
-        #          contig2<  |             contig2<
-        #        |- L ->...  | <-R_2-|   ...<-L_2-|
-        #        >contig3    | >contig3
-        #                    | |-L_3->...|-R_3->
-        #                    |           |-R_3->.*.*.*
-        #                    |           | exactly one contigs starts with |-R_3->
-        # Expect <-L_2-| == reverse_complement(|-R_2->) inherent there are the same terminal of the same contig
-        #
-        return (
-            len(path1_nR_pair := link_pair[contig_name(path1) + "_L"]) == 1
-            and len(path2_nL_pair := link_pair[contig_name(path2) + "_R"]) == 1
-            and contig_name(path1_nR_pair[0]) == contig_name(path2_nL_pair[0])
-        )
-    elif (not path1_is_L) and (not path2_is_L):
-        return (
-            contig_name(path1) + "_L" in one_path_end
-            and contig_name(path2) + "_L" in one_path_end
-            and contig_name(link_pair[contig_name(path1) + "_L"][0])
-            == contig_name(link_pair[contig_name(path2) + "_L"][0])
-        )
-    elif path1_is_L and path2_is_L:
-        return (
-            contig_name(path1) + "_R" in one_path_end
-            and contig_name(path2) + "_R" in one_path_end
-            and contig_name(link_pair[contig_name(path1) + "_R"][0])
-            == contig_name(link_pair[contig_name(path2) + "_R"][0])
-        )
-    else:
-        return False
+    path1_R_pair = link_pair[contig_name(path1) + ("_R" if path1_is_L else "_L")]
+    path2_L_pair = link_pair[contig_name(path2) + ("_R" if path2_is_L else "_L")]
+    return (
+        len(path1_R_pair) == 1
+        and len(path2_L_pair) == 1
+        and contig_name(path1_R_pair[0]) == contig_name(path2_L_pair[0])
+    )
 
 
 def the_dominant_one(two_paths):
@@ -1000,24 +971,24 @@ def main(
     # link_pair = {}  # used to save all overlaps between ends
     for end in d_L_d_Lrc_shared:
         for left in d_L[end]:  # left is a seq name
-            link_pair.setdefault(left, []).extend(d_Lrc[end])
+            link_pair[left].extend(d_Lrc[end])
         for left_rc in d_Lrc[end]:
-            link_pair.setdefault(left_rc, []).extend(d_L[end])
+            link_pair[left_rc].extend(d_L[end])
     for end in d_L_d_R_shared:
         for left in d_L[end]:
-            link_pair.setdefault(left, []).extend(d_R[end])
+            link_pair[left].extend(d_R[end])
         for right in d_R[end]:
-            link_pair.setdefault(right, []).extend(d_L[end])
+            link_pair[right].extend(d_L[end])
     for end in d_R_d_Rrc_shared:
         for right in d_R[end]:
-            link_pair.setdefault(right, []).extend(d_Rrc[end])
+            link_pair[right].extend(d_Rrc[end])
         for right_rc in d_Rrc[end]:
-            link_pair.setdefault(right_rc, []).extend(d_R[end])
+            link_pair[right_rc].extend(d_R[end])
     for end in d_Rrc_d_Lrc_shared:
         for right_rc in d_Rrc[end]:
-            link_pair.setdefault(right_rc, []).extend(d_Lrc[end])
+            link_pair[right_rc].extend(d_Lrc[end])
         for left_rc in d_Lrc[end]:
-            link_pair.setdefault(left_rc, []).extend(d_Rrc[end])
+            link_pair[left_rc].extend(d_Rrc[end])
 
     ##
     # save all paired links to a file
