@@ -383,6 +383,8 @@ def join_walker(
     contig2join_reason: dict[str, dict[str, str]],
     path_circular: set[str],
     path_circular_end: set[str],
+    parsed_linkage: set[tuple[str, str]],
+    cov: dict[str, float],
 ):
     """
     get potential joins for a given query
@@ -479,7 +481,7 @@ def join_walker(
             ):
                 # 1. target is extendable (the only link_pair here)
                 path_circular.add(contig)
-                path_circular_end.add(contig + "_" + direction)
+                path_circular_end.add(end)
                 contig2join_reason[contig][contig_name(target)] = "could_circulate"
         elif target in two_paths_end:
             link_pair1, link_pair2 = link_pair[target]
@@ -515,7 +517,7 @@ def join_walker(
                         target, contig, direction, link_pair=link_pair, cov=cov
                     ):
                         path_circular.add(contig)
-                        path_circular_end.add(contig + "_" + direction)
+                        path_circular_end.add(end)
                         contig2join_reason[contig][
                             contig_name(target)
                         ] = "could_circulate"
@@ -1232,6 +1234,8 @@ def main(
             contig2join_reason=contig2join_reason,
             path_circular=path_circular,
             path_circular_end=path_circular_end,
+            parsed_linkage=parsed_linkage,
+            cov=cov,
         ):
             pass
         while result_R := join_walker(
@@ -1242,9 +1246,13 @@ def main(
             contig2join_reason=contig2join_reason,
             path_circular=path_circular,
             path_circular_end=path_circular_end,
+            parsed_linkage=parsed_linkage,
+            cov=cov,
         ):
             pass
 
+    print("# path_circular", file=debug, flush=True)
+    print(sorted(path_circular), file=debug, flush=True)
     ##
     # save the potential joining paths
     log_info("[10/23]", "Saving potential joining paths.", log)
@@ -1261,80 +1269,57 @@ def main(
 
     ##
     # get the fail_to_join contigs, but not due to orphan end
+    # the simplest situation
     failed_join_list = []
     for contig in query_set:
-        if contig + "_L" in link_pair.keys() or contig + "_R" in link_pair.keys():
+        if contig + "_L" in link_pair or contig + "_R" in link_pair:
             if (
-                len(contig2join[contig + "_L"]) == 0
+                contig not in self_circular
+                and len(contig2join[contig + "_L"]) == 0
                 and len(contig2join[contig + "_R"]) == 0
-                and contig not in self_circular
             ):
                 failed_join_list.append(contig)
-                print(
-                    contig,
-                    len(contig2join[contig + "_L"]),
-                    len(contig2join[contig + "_R"]),
-                    contig not in self_circular,
-                )
-            else:
-                pass
-        else:
-            pass
 
+    print("# 1failed_join_list", file=debug, flush=True)
+    print(sorted(failed_join_list), file=debug, flush=True)
     ##
     # get the joining paths
     log_info("[11/23]", "Checking for invalid joining: sharing queries.", log)
-    contig2assembly = {}
-    for item in contig2join.keys():
+    contig2assembly: dict[str, set[str]] = {}
+    for item in contig2join:
         contig = contig_name(item)
+        # detect extented query contigs
+        if contig not in contig2assembly:
+            contig2assembly[contig] = {contig}
         if (
             contig + "_L" in path_circular_end
             and contig + "_R" not in path_circular_end
         ):
-            if contig not in contig2assembly.keys():
-                contig2assembly[contig] = set()
-                contig2assembly[contig].add(contig)
-                for point in contig2join[contig + "_L"]:
-                    contig2assembly[contig].add(contig_name(point))
-            else:
-                for point in contig2join[contig + "_L"]:
-                    contig2assembly[contig].add(contig_name(point))
+            # here, only one path can be found to be circulated.
+            contig2assembly[contig].update(
+                (contig_name(i) for i in contig2join[contig + "_L"])
+            )
         elif (
             contig + "_L" not in path_circular_end
             and contig + "_R" in path_circular_end
         ):
-            if contig not in contig2assembly.keys():
-                contig2assembly[contig] = set()
-                contig2assembly[contig].add(contig)
-                for point in contig2join[contig + "_R"]:
-                    contig2assembly[contig].add(contig_name(point))
-            else:
-                for point in contig2join[contig + "_R"]:
-                    contig2assembly[contig].add(contig_name(point))
+            contig2assembly[contig].update(
+                (contig_name(i) for i in contig2join[contig + "_R"])
+            )
         else:
-            if contig not in contig2assembly.keys():
-                contig2assembly[contig] = set()
-                contig2assembly[contig].add(contig)
-                for point in contig2join[item]:
-                    contig2assembly[contig].add(contig_name(point))
-            else:
-                for point in contig2join[item]:
-                    contig2assembly[contig].add(contig_name(point))
+            contig2assembly[contig].update((contig_name(i) for i in contig2join[item]))
 
     # for debug
-    print("path_circular", file=debug, flush=True)
-    print(path_circular, file=debug, flush=True)
-    print("1failed_join_list", file=debug, flush=True)
-    print(failed_join_list, file=debug, flush=True)
-    print("contig2assembly", file=debug, flush=True)
-    print(contig2assembly, file=debug, flush=True)
+    print("# contig2assembly", file=debug, flush=True)
+    for k in sorted(contig2assembly):
+        print(k, sorted(contig2assembly[k]), file=debug, flush=True)
 
     ##
     # find the redundant joining paths
-    redundant = set()
-    is_same_as = {}
-    for contig in contig2assembly.keys():
-        for contig_1 in contig2assembly.keys():
+    redundant: set[str] = set()
+    is_same_as: dict[str, set[str]] = {}
+    for contig in tqdm(contig2assembly):
+        for contig_1 in contig2assembly:
             if contig != contig_1 and contig2assembly[contig].issubset(
                 contig2assembly[contig_1]
             ):
@@ -1380,8 +1365,6 @@ def main(
                         is_same_as[contig].add(contig_1)
                     else:
                         is_same_as[contig].add(contig_1)
-            else:
-                pass
 
     # for debug
     print("2failed_join_list", file=debug, flush=True)
@@ -1401,7 +1384,7 @@ def main(
     same_path = []  # two are the same path
     contig_shared_by_paths = set()  # the queries in multiple non-unique paths
 
-    for contig in contig2assembly.keys():
+    for contig in contig2assembly:
         if contig not in redundant and contig not in failed_join_list:
             if contig2assembly[contig] not in same_path:
                 same_path.append(contig2assembly[contig])
@@ -1421,7 +1404,7 @@ def main(
 
     for contig in set(all):
         if all.count(contig) > 1:
-            for contig_1 in contig2assembly.keys():
+            for contig_1 in contig2assembly:
                 if contig_1 not in redundant and contig not in failed_join_list:
                     if contig in contig2assembly[contig_1]:
                         contig_shared_by_paths.add(contig_1)
@@ -1437,7 +1420,7 @@ def main(
     print(contig_shared_by_paths, file=debug, flush=True)
 
     for contig in contig_shared_by_paths:
-        if contig in contig2assembly.keys():
+        if contig in contig2assembly:
             del contig2assembly[contig]
             failed_join_list.append(contig)
         else:
@@ -1468,7 +1451,7 @@ def main(
     # determine the joining status of queries
     log_info("[12/23]", "Getting initial joining status of each query contig.", log)
 
-    for contig in contig2assembly.keys():
+    for contig in contig2assembly:
         if contig not in failed_join_list:
             if contig in redundant:
                 if is_subset_of[contig] in path_circular:
@@ -1591,7 +1574,7 @@ def main(
     # order_all = {}
     # added_to_contig = {}
 
-    for contig in contig2assembly.keys():
+    for contig in contig2assembly:
         # only those contigs left in contig2assembly after filtering
         # (see above "# remove the queries in multiple paths") will be
         # checked for join paths (join_seqs) to get order_all
