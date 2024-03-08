@@ -144,13 +144,14 @@ parsed_linkage: set[tuple[str, str]] = set()
 self_circular: set[str] = set()
 self_circular_non_expected_overlap: dict[str, int] = {}
 
-contig2join = {}
+contig2join: dict[str, list[str]] = {}
 contig_checked: dict[str, list[str]] = {}
 contig2join_reason: dict[str, dict[str, str]] = {}
 
-cov = {}  # the coverage of contigs
-path_circular_end = set()
-path_circular = set()
+cov: dict[str, float] = {}  # the coverage of contigs
+path_circular_end: set[str] = set()
+path_circular: set[str] = set()
+
 is_subset_of = {}
 extended_circular_query = set()
 extended_partial_query = set()
@@ -209,7 +210,7 @@ def get_target(item: str):
         return base_name + "_R"
 
 
-def are_equal_paths(path1: str, path2: str):
+def are_equal_paths(path1: str, path2: str, link_pair: dict[str, list[str]]):
     """
     evaluate if two paths are equal, two_paths is a list including two ends, e.g., a_L, b_R
     """
@@ -241,136 +242,81 @@ def are_equal_paths(path1: str, path2: str):
     )
 
 
-def the_dominant_one(two_paths):
+def the_dominant_one(path1: str, path2: str, cov: dict[str, float]):
     """
     get the dominant path from two equal paths
     """
-    if cov[contig_name(two_paths[0])] >= cov[contig_name(two_paths[1])]:
-        return two_paths[0]
+    if cov[contig_name(path1)] >= cov[contig_name(path2)]:
+        return path1
     else:
-        return two_paths[1]
+        return path2
 
 
-def could_circulate(point, contig, direction):
+def could_circulate(
+    point: str,
+    contig: str,
+    direction: Literal["L", "R"],
+    link_pair: dict[str, list[str]],
+    cov: dict[str, float],
+):
     """
     check if the path is circular with the current contig included
     """
+    contig_pair = ""
+    other_direction = {"L": "_R", "R": "_L"}[direction]
     if len(link_pair[point]) == 2:  # point is the same as "target" in join_walker
-        if direction == "L":
-            if contig_name(link_pair[point][0]) == contig:
-                if cov[contig_name(point)] < 1.5 * cov[contig]:
-                    # 2 times is for repeat, but it is too risky, use 1.5 instead (same below)
-                    return (
-                        link_pair[point][0].endswith("_R")
-                        and (contig + "_R", point) in parsed_linkage
-                    )
-                else:
-                    return False
-            elif contig_name(link_pair[point][1]) == contig:
-                if cov[contig_name(point)] < 1.5 * cov[contig]:
-                    return (
-                        link_pair[point][1].endswith("_R")
-                        and (contig + "_R", point) in parsed_linkage
-                    )
-                else:
-                    return False
-            else:
-                return False
-        elif direction == "R":
-            if contig_name(link_pair[point][0]) == contig:
-                if cov[contig_name(point)] < 1.5 * cov[contig]:
-                    return (
-                        link_pair[point][0].endswith("_L")
-                        and (contig + "_L", point) in parsed_linkage
-                    )
-                else:
-                    return False
-            elif contig_name(link_pair[point][1]) == contig:
-                if cov[contig_name(point)] < 1.5 * cov[contig]:
-                    return (
-                        link_pair[point][1].endswith("_L")
-                        and (contig + "_L", point) in parsed_linkage
-                    )
-                else:
-                    return False
-            else:
-                return False
-        else:
-            return False
-
+        link_pair1, link_pair2 = link_pair[point]
+        if contig_name(link_pair1) == contig:
+            contig_pair = link_pair1
+        elif contig_name(link_pair2) == contig:
+            contig_pair = link_pair2
     elif len(link_pair[point]) == 1:
-        if direction == "L":
-            if contig_name(link_pair[point][0]) == contig:
-                return (
-                    link_pair[point][0].endswith("_R")
-                    and (contig + "_R", point) in parsed_linkage
-                )
-        elif direction == "R":
-            if contig_name(link_pair[point][0]) == contig:
-                return (
-                    link_pair[point][0].endswith("_L")
-                    and (contig + "_L", point) in parsed_linkage
-                )
-
-    else:
-        return False
+        (link_pair1,) = link_pair[point]
+        if contig_name(link_pair1) == contig:
+            contig_pair = link_pair1
+    return (
+        contig_pair
+        and contig_pair.endswith(other_direction)
+        and (contig + other_direction, point) in parsed_linkage
+    )
 
 
-def the_better_one(two_paths, contig):
+def the_better_one(paths: Iterable[str], contig: str, cov: dict[str, float]):
     """
     Calculate the absolute differences in coverage
     """
-    diff0 = abs(cov[contig] - cov[contig_name(two_paths[0])])
-    diff1 = abs(cov[contig] - cov[contig_name(two_paths[1])])
-
-    # If diff0 is 0, return two_paths[0]
-    if diff0 == 0:
-        return two_paths[0]
-    else:
-        # If diff1 is not 0, calculate the ratio and compare
-        if diff1 != 0:
-            ratio = diff0 / diff1
-
-            if ratio > 1:
-                return two_paths[1]
-            elif ratio <= 1:
-                return two_paths[0]
-        # If diff1 is 0, return two_paths[1]
-        else:
-            return two_paths[1]
+    return min(paths, key=lambda x: abs(cov[contig] - cov[contig_name(x)]))
 
 
-def other_end_is_extendable(end, contig):
+def other_end_is_extendable(
+    end: str, self_circular: set[str], link_pair: dict[str, list[str]]
+):
     """
     check if the other end is extendable
     """
-    if contig_name(end) not in self_circular:
-        if get_target(end) in link_pair.keys():
-            return len(link_pair[get_target(end)]) > 0
-        else:
-            return False
-    else:
+    if contig_name(end) in self_circular:
         return False
+    return len(link_pair[get_target(end)]) > 0
 
 
-def is_ok_to_add(end, contig):
+def is_ok_to_add(end: str, contig: str, self_circular: set[str], cov: dict[str, float]):
     """
     if the other end of a potential joining contig cannot be extended,
     add only when it has a very similar coverage to that of the query contig
     """
-    if contig_name(end) not in self_circular:
-        return 0.9 * cov[contig] <= cov[contig_name(end)] <= 1.11 * cov[contig]
+    if contig_name(end) in self_circular:
+        return False
+    return (
+        0.9 * cov[contig] <= cov[contig_name(end)]
+        and cov[contig_name(end)] <= 1.11 * cov[contig]
+    )
 
 
-def not_checked(end_list, checked):
+def not_checked(end_list: Iterable[str], checked: list[str]):
     """
     to see if a potential contig has been checked for adding or not
     """
-    total_checked = 0
-    for end in end_list:
-        if contig_name(end) in checked:
-            total_checked += 1
-    return total_checked == 0
+    return not any(contig_name(end) in checked for end in end_list)
 
 
 def detect_self_circular(
@@ -429,39 +375,44 @@ def detect_self_circular(
     return ""
 
 
-def join_walker(contig: str, direction: Literal["L", "R"]):
+def join_walker(
+    contig: str,
+    direction: Literal["L", "R"],
+    contig2join: dict[str, list[str]],
+    contig_checked: dict[str, list[str]],
+    contig2join_reason: dict[str, dict[str, str]],
+    path_circular: set[str],
+    path_circular_end: set[str],
+):
     """
     get potential joins for a given query
     """
-    global contig2join, contig_checked, contig2join_reason
-    global path_circular, path_circular_end
 
     end = f"{contig}_{direction}"
-    a = len(contig2join[end])
-    if a == 0:
+    len_before_walk = len(contig2join[end])
+    if len_before_walk == 0:
         contig_checked[end].append(contig)
         if end in one_path_end:
-            if contig_name(link_pair[end][0]) != contig:
-                if (
-                    other_end_is_extendable(link_pair[end][0], contig)
-                    and (end, link_pair[end][0]) in parsed_linkage
-                    and contig_name(link_pair[end][0]) not in self_circular
+            link_pair1 = link_pair[end][0]
+            if contig_name(link_pair1) != contig:
+                checked_reason = ""
+                # 1. link_pair1 is not point to a self-circulated contig
+                if other_end_is_extendable(
+                    link_pair1, self_circular=self_circular, link_pair=link_pair
                 ):
-                    contig2join[end].append(link_pair[end][0])
-                    contig_checked[end].append(contig_name(link_pair[end][0]))
-                    contig2join_reason[contig][
-                        contig_name(link_pair[end][0])
-                    ] = "other_end_is_extendable"
-                elif (
-                    is_ok_to_add(link_pair[end][0], contig)
-                    and (end, link_pair[end][0]) in parsed_linkage
-                    and contig_name(link_pair[end][0]) not in self_circular
+                    # 2.1. link_pair1 can be extend in the next step
+                    checked_reason = "other_end_is_extendable"
+                elif is_ok_to_add(
+                    link_pair1, contig, self_circular=self_circular, cov=cov
                 ):
-                    contig2join[end].append(link_pair[end][0])
-                    contig_checked[end].append(contig_name(link_pair[end][0]))
-                    contig2join_reason[contig][
-                        contig_name(link_pair[end][0])
-                    ] = "is_ok_to_add"
+                    # 2.2. link_pair1 has similar coverage with contig
+                    # however, it CANNOT be extend in the next step
+                    checked_reason = "is_ok_to_add"
+                if checked_reason and (end, link_pair1) in parsed_linkage:
+                    # 3. linkage between link_pair1 and end is supported by reads linkage
+                    contig2join[end].append(link_pair1)
+                    contig_checked[end].append(contig_name(link_pair1))
+                    contig2join_reason[contig][contig_name(link_pair1)] = checked_reason
         elif end in two_paths_end:
             # >contig<
             #        |-end-|
@@ -472,145 +423,103 @@ def join_walker(contig: str, direction: Literal["L", "R"]):
             #             >contig3<
             # no more contigs starts with `|----->`
             #
-            if (
-                link_pair[end][0].rsplit("_", 1)[0]
-                != link_pair[end][1].rsplit("_", 1)[0]
-            ):
-                if are_equal_paths(*link_pair[end]):
-                    if (
-                        contig_name(the_dominant_one(link_pair[end]))
-                        not in self_circular
-                    ):
-                        contig2join[end].append(the_dominant_one(link_pair[end]))
-                        contig_checked[end].append(contig_name((link_pair[end][0])))
-                        contig_checked[end].append(contig_name((link_pair[end][1])))
-                        contig2join_reason[contig][
-                            contig_name(the_dominant_one(link_pair[end]))
-                        ] = "are_equal_paths"
-                else:
-                    if (
-                        cov[contig_name(link_pair[end][0])]
-                        + cov[contig_name(link_pair[end][1])]
-                        >= cov[contig] * 0.5
-                    ):
-                        # 0.5 is ok, too big will get much fewer "Extended circular" ones.
-                        if (
-                            contig_name(the_better_one(link_pair[end], contig))
-                            not in self_circular
-                        ):
-                            contig2join[end].append(
-                                the_better_one(link_pair[end], contig)
-                            )
-                            contig_checked[end].append(contig_name((link_pair[end][0])))
-                            contig_checked[end].append(contig_name((link_pair[end][1])))
-                            contig2join_reason[contig][
-                                contig_name(the_better_one(link_pair[end], contig))
-                            ] = "the_better_one"
+            link_pair1, link_pair2 = link_pair[end]
+            if contig_name(link_pair1) != contig_name(link_pair2):
+                checked_reason = ""
+                if are_equal_paths(link_pair1, link_pair2, link_pair=link_pair):
+                    #             >contig2<
+                    #        |----->.*.   |=====>
+                    # >contig<            |=====>.*.*.*
+                    #  .*.*.*|----->            >contig4<
+                    #        |-end-|
+                    #        |----->   *.*|=====>
+                    #             >contig3<
+                    # no more contigs starts with `|----->` or ends with `|=====>`
+                    #
+                    link_pair_do = the_dominant_one(link_pair1, link_pair2, cov=cov)
+                    checked_reason = "are_equal_paths"
+                elif (
+                    cov[contig_name(link_pair1)] + cov[contig_name(link_pair2)]
+                    >= cov[contig] * 0.5
+                ):
+                    # 0.5 is ok, too big will get much fewer "Extended circular" ones.
+                    # choise the one with more similar abundance
+                    link_pair_do = the_better_one(link_pair[end], contig, cov=cov)
+                    checked_reason = "the_better_one"
+                if checked_reason and contig_name(link_pair_do) not in self_circular:
+                    contig2join[end].append(link_pair_do)
+                    contig_checked[end].append(contig_name(link_pair1))
+                    contig_checked[end].append(contig_name(link_pair2))
+                    contig2join_reason[contig][
+                        contig_name(link_pair_do)
+                    ] = checked_reason
+                    # TODO: also record the discarded one
     else:
         target = get_target(contig2join[end][-1])
         if target in one_path_end:
-            if not_checked(link_pair[target], contig_checked[end]):
-                if (
-                    other_end_is_extendable(link_pair[target][0], contig)
-                    and (target, link_pair[target][0]) in parsed_linkage
-                    and contig_name(link_pair[target][0]) not in self_circular
+            link_pair1 = link_pair[target][0]
+            if not_checked([link_pair1], contig_checked[end]):
+                # inherent contig_name(link_pair1) != contig
+                # the same as ablove
+                checked_reason = ""
+                if other_end_is_extendable(
+                    link_pair1, self_circular=self_circular, link_pair=link_pair
                 ):
-                    contig2join[end].append(link_pair[target][0])
-                    contig_checked[end].append(contig_name(link_pair[target][0]))
-                    contig2join_reason[contig][
-                        contig_name(link_pair[target][0])
-                    ] = "other_end_is_extendable"
-                elif (
-                    is_ok_to_add(link_pair[target][0], contig)
-                    and (target, link_pair[target][0]) in parsed_linkage
-                    and contig_name(link_pair[target][0]) not in self_circular
+                    checked_reason = "other_end_is_extendable"
+                elif is_ok_to_add(
+                    link_pair1, contig, self_circular=self_circular, cov=cov
                 ):
-                    contig2join[end].append(link_pair[target][0])
-                    contig_checked[end].append(contig_name(link_pair[target][0]))
-                    contig2join_reason[contig][
-                        contig_name(link_pair[target][0])
-                    ] = "is_ok_to_add"
-                else:
-                    pass
-            else:
-                if could_circulate(target, contig, direction):
-                    path_circular.add(contig)
-                    path_circular_end.add(contig + "_" + direction)
-                    contig2join_reason[contig][contig_name(target)] = "could_circulate"
-        elif target in two_paths_end:
-            if (
-                link_pair[target][0].rsplit("_", 1)[0]
-                != link_pair[target][1].rsplit("_", 1)[0]
+                    checked_reason = "is_ok_to_add"
+                if checked_reason and (target, link_pair1) in parsed_linkage:
+                    contig2join[end].append(link_pair1)
+                    contig_checked[end].append(contig_name(link_pair1))
+                    contig2join_reason[contig][contig_name(link_pair1)] = checked_reason
+            elif could_circulate(
+                target, contig, direction, link_pair=link_pair, cov=cov
             ):
-                if cov[contig_name(target)] >= 1.9 * cov[contig]:
-                    pass
-                else:
-                    if not_checked(link_pair[target], contig_checked[end]):
-                        if are_equal_paths(*link_pair[target]):
-                            if (
-                                contig_name(the_dominant_one(link_pair[target]))
-                                not in self_circular
-                            ):
-                                contig2join[end].append(
-                                    the_dominant_one(link_pair[target])
-                                )
-                                contig_checked[end].append(
-                                    contig_name(link_pair[target][0])
-                                )
-                                contig_checked[end].append(
-                                    contig_name(link_pair[target][1])
-                                )
-                                contig2join_reason[contig][
-                                    contig_name(the_dominant_one(link_pair[target]))
-                                ] = "are_equal_paths"
-                            else:
-                                pass
-                        else:
-                            if (
-                                cov[contig_name(link_pair[target][0])]
-                                + cov[contig_name(link_pair[target][1])]
-                                >= cov[contig] * 0.5
-                            ):
-                                # 0.5 is ok, too big will get much fewer "Extended circular" ones.
-                                if (
-                                    contig_name(
-                                        the_better_one(link_pair[target], contig)
-                                    )
-                                    not in self_circular
-                                ):
-                                    contig2join[end].append(
-                                        the_better_one(link_pair[target], contig)
-                                    )
-                                    contig_checked[end].append(
-                                        contig_name((link_pair[target][0]))
-                                    )
-                                    contig_checked[end].append(
-                                        contig_name((link_pair[target][1]))
-                                    )
-                                    contig2join_reason[contig][
-                                        contig_name(
-                                            the_better_one(link_pair[target], contig)
-                                        )
-                                    ] = "the_better_one"
-                                else:
-                                    pass
-                            else:
-                                pass
-                    else:
-                        if could_circulate(target, contig, direction):
-                            path_circular.add(contig)
-                            path_circular_end.add(contig + "_" + direction)
+                # 1. target is extendable (the only link_pair here)
+                path_circular.add(contig)
+                path_circular_end.add(contig + "_" + direction)
+                contig2join_reason[contig][contig_name(target)] = "could_circulate"
+        elif target in two_paths_end:
+            link_pair1, link_pair2 = link_pair[target]
+            if contig_name(link_pair1) != contig_name(link_pair2):
+                if cov[contig_name(target)] < 1.9 * cov[contig]:
+                    if not_checked([link_pair1, link_pair2], contig_checked[end]):
+                        checked_reason = ""
+                        if are_equal_paths(link_pair1, link_pair2, link_pair=link_pair):
+                            link_pair_do = the_dominant_one(
+                                link_pair1, link_pair2, cov=cov
+                            )
+                            checked_reason = "are_equal_paths"
+                        elif (
+                            cov[contig_name(link_pair1)] + cov[contig_name(link_pair2)]
+                            >= cov[contig] * 0.5
+                        ):
+                            # 0.5 is ok, too big will get much fewer "Extended circular" ones.
+                            link_pair_do = the_better_one(
+                                link_pair[target], contig, cov=cov
+                            )
+                            checked_reason = "the_better_one"
+                        if (
+                            checked_reason
+                            and contig_name(link_pair_do) not in self_circular
+                        ):
+                            contig2join[end].append(link_pair_do)
+                            contig_checked[end].append(contig_name(link_pair1))
+                            contig_checked[end].append(contig_name(link_pair2))
                             contig2join_reason[contig][
-                                contig_name(target)
-                            ] = "could_circulate"
-                        else:
-                            pass
-            else:
-                pass
-        else:
-            pass
-
-    return a < len(contig2join[end])
+                                contig_name(link_pair_do)
+                            ] = checked_reason
+                    elif could_circulate(
+                        target, contig, direction, link_pair=link_pair, cov=cov
+                    ):
+                        path_circular.add(contig)
+                        path_circular_end.add(contig + "_" + direction)
+                        contig2join_reason[contig][
+                            contig_name(target)
+                        ] = "could_circulate"
+    return len_before_walk < len(contig2join[end])
 
 
 def join_seqs(contig: str):
@@ -1308,37 +1217,47 @@ def main(
         contig_checked[contig + "_R"] = []
         contig2join_reason[contig] = {contig: "query"}
 
-    for contig in tqdm(query_set - (orphan_end_query | self_circular)):
+    # path_circular_end = set()
+    # path_circular = set()
+    for contig in tqdm(
+        query_set - (orphan_end_query | self_circular),
+        desc="Detecting joins of contigs. ",
+    ):
         # extend each contig from both directions
-        while result_L := join_walker(contig, "L"):
+        while result_L := join_walker(
+            contig,
+            "L",
+            contig2join=contig2join,
+            contig_checked=contig_checked,
+            contig2join_reason=contig2join_reason,
+            path_circular=path_circular,
+            path_circular_end=path_circular_end,
+        ):
             pass
-
-        while result_R := join_walker(contig, "R"):
+        while result_R := join_walker(
+            contig,
+            "R",
+            contig2join=contig2join,
+            contig_checked=contig_checked,
+            contig2join_reason=contig2join_reason,
+            path_circular=path_circular,
+            path_circular_end=path_circular_end,
+        ):
             pass
 
     ##
     # save the potential joining paths
-    log.write("100% finished." + "\n")
     log_info("[10/23]", "Saving potential joining paths.", log)
 
-    with open(
-        "{0}/COBRA_potential_joining_paths.txt".format(working_dir), "w"
-    ) as results:
-        for item in contig2join.keys():
+    with open(f"{working_dir}/COBRA_potential_joining_paths.txt", "w") as results:
+        for item in sorted(contig2join):
             if contig_name(item) in self_circular:
                 if item.endswith("_L"):
-                    results.write(
-                        item + "\t" + "['" + contig_name(item) + "_R" + "']" + "\n"
-                    )
-                    results.flush()
+                    results.write(f"{item}\t['{contig_name(item)}_R']\n")
                 else:
-                    results.write(
-                        item + "\t" + "['" + contig_name(item) + "_L" + "']" + "\n"
-                    )
-                    results.flush()
-            else:
-                results.write(item + "\t" + str(contig2join[item]) + "\n")
-                results.flush()
+                    results.write(f"{item}\t['{contig_name(item)}_L']\n")
+            elif contig2join[item]:
+                results.write(f"{item}\t{contig2join[item]}\n")
 
     ##
     # get the fail_to_join contigs, but not due to orphan end
