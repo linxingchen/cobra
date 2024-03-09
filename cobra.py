@@ -486,7 +486,29 @@ def join_walker(
         elif target in two_paths_end:
             link_pair1, link_pair2 = link_pair[target]
             if contig_name(link_pair1) != contig_name(link_pair2):
+                # >contig<
+                # .*.|----->
+                #    >contig of target<
+                #    |----->*.*.*.|----->
+                #                 |-----| target
+                #                 |----->.*.*.*
+                #                      >contig2<
+                #                 |----->.*.*.*
+                #                      >contig3<
+                # no more contigs starts with `|----->`
+                #
                 if cov[contig_name(target)] < 1.9 * cov[contig]:
+                    # given a contig
+                    #   |-query contig->[repeat region]|-contig2->[repeat region]|-contig3->
+                    # where len(repeat region) > maxk, then the linkage looks like:
+                    #   |-query contig->[repea>                           | 1* cov
+                    #                   [repeat region]                   | 2* cov
+                    #                           |egion]|-contig2->[repea> | 1* cov
+                    #                           |egion]|-contig3->        | 1* cov
+                    # where we can only confirm:
+                    #   |-query contig->[repeat region]
+                    # If we query the [repeat region], then never mind.
+                    #
                     if not_checked([link_pair1, link_pair2], contig_checked[end]):
                         checked_reason = ""
                         if are_equal_paths(link_pair1, link_pair2, link_pair=link_pair):
@@ -694,10 +716,10 @@ def summarize(contig: str):
     """
     summary the retrieved contigs and joined information of each query
     """
-    if contig not in is_subset_of.keys():
+    if contig not in is_subset_of:
         item = contig
     else:
-        if is_subset_of[contig] in is_subset_of.keys():
+        if is_subset_of[contig] in is_subset_of:
             item = is_subset_of[is_subset_of[contig]]
         else:
             item = is_subset_of[contig]
@@ -1281,7 +1303,7 @@ def main(
                 failed_join_list.append(contig)
 
     print("# 1failed_join_list", file=debug, flush=True)
-    print(sorted(failed_join_list), file=debug, flush=True)
+    print(failed_join_list, file=debug, flush=True)
     ##
     # get the joining paths
     log_info("[11/23]", "Checking for invalid joining: sharing queries.", log)
@@ -1314,7 +1336,12 @@ def main(
     for k in sorted(contig2assembly):
         print(k, sorted(contig2assembly[k]), file=debug, flush=True)
 
+    failed_join_list_back = list(failed_join_list)
+    path_circular_back = set(path_circular)
     ##
+    # path_circular = set(path_circular_back)
+    # is_subset_of = {}
+    failed_join_list = list(failed_join_list_back)
     # find the redundant joining paths
     redundant: set[str] = set()
     is_same_as: dict[str, set[str]] = {}
@@ -1333,7 +1360,7 @@ def main(
                         else:
                             redundant.add(contig_1)
                             path_circular.add(contig_1)
-                            if contig not in is_subset_of.keys():
+                            if contig not in is_subset_of:
                                 is_subset_of[contig_1] = contig
                             else:
                                 is_subset_of[contig_1] = is_subset_of[contig]
@@ -1341,7 +1368,7 @@ def main(
                         # in this case, should use contig_1, not contig, thus contig is_subset_of contig_1
                         path_circular.add(contig)
                         redundant.add(contig)
-                        if contig_1 not in is_subset_of.keys():
+                        if contig_1 not in is_subset_of:
                             is_subset_of[contig] = contig_1
                         else:
                             is_subset_of[contig] = is_subset_of[contig_1]
@@ -1355,7 +1382,7 @@ def main(
                             is_same_as[contig].add(contig_1)
                     else:  # in this case, contig is_subset_of contig_1, which is different from the first case above.
                         redundant.add(contig)
-                        if contig_1 not in is_subset_of.keys():
+                        if contig_1 not in is_subset_of:
                             is_subset_of[contig] = contig_1
                         else:
                             is_subset_of[contig] = is_subset_of[contig_1]
@@ -1370,7 +1397,7 @@ def main(
     print("2failed_join_list", file=debug, flush=True)
     print(failed_join_list, file=debug, flush=True)
 
-    for contig in is_subset_of.keys():
+    for contig in is_subset_of:
         if is_subset_of[contig] in failed_join_list:
             failed_join_list.append(contig)
 
@@ -1431,12 +1458,12 @@ def main(
     print(failed_join_list, file=debug, flush=True)
 
     for contig in contig_shared_by_paths:
-        for item in is_subset_of.keys():
+        for item in is_subset_of:
             if contig == is_subset_of[item]:
                 del contig2assembly[item]
                 failed_join_list.append(item)
 
-                for item_1 in is_subset_of.keys():
+                for item_1 in is_subset_of:
                     if is_subset_of[item_1] == item:
                         del contig2assembly[item_1]
                         failed_join_list.append(item_1)
@@ -1482,16 +1509,10 @@ def main(
     # deal with cross-assignment queries
     log_info("[13/23]", "Getting final joining status of each query contig.", log)
     for contig in failed_join_list:
-        if (
-            contig in is_subset_of.keys()
-            and is_subset_of[contig] in extended_circular_query
-        ):
+        if contig in is_subset_of and is_subset_of[contig] in extended_circular_query:
             failed_join_list.remove(contig)
             extended_circular_query.add(contig)
-        elif (
-            contig in is_subset_of.keys()
-            and is_subset_of[contig] in extended_partial_query
-        ):
+        elif contig in is_subset_of and is_subset_of[contig] in extended_partial_query:
             failed_join_list.remove(contig)
             extended_partial_query.add(contig)
         elif contig in is_same_as.keys():
