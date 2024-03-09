@@ -1336,12 +1336,7 @@ def main(
     for k in sorted(contig2assembly):
         print(k, sorted(contig2assembly[k]), file=debug, flush=True)
 
-    failed_join_list_back = list(failed_join_list)
-    path_circular_back = set(path_circular)
     ##
-    # path_circular = set(path_circular_back)
-    # is_subset_of = {}
-    failed_join_list = list(failed_join_list_back)
     # find the redundant joining paths
     redundant: set[str] = set()
     is_same_as: dict[str, set[str]] = {}
