@@ -144,19 +144,6 @@ def log_info(step: str, description: str, log_file: TextIO, line_feed="\n"):
     )
 
 
-def determine_file_format(filename: str):
-    """
-    Determine the format of the input file.
-    Returns either "fasta" or "txt" based on the content.
-    """
-    with open(filename, "r") as f:
-        first_line = next(f)
-        if first_line.startswith(">"):
-            return "fasta"
-        else:
-            return "txt"
-
-
 def contig_name(end_name: str):
     """
     get contig name from end name
@@ -181,119 +168,6 @@ def get_target(item: str):
         return base_name + "_L"
     else:
         return base_name + "_R"
-
-
-def are_equal_paths(path1: str, path2: str, link_pair: dict[str, list[str]]):
-    """
-    evaluate if two paths are equal, two_paths is a list including two ends, e.g., a_L, b_R
-    """
-    # >contig<
-    #        |-end-|
-    #  .*.*.*|----->
-    # path1, path2      |           | exactly one contigs starts with |-R_2->    |
-    #        |- L ->... |           |-R_2->.*.*.*                                |
-    #        >contig2   | >contig2                                               |
-    #        |~Rrc~>*** | |-L_2->...|-R_2->                                      |
-    #          contig3< |             contig3<                                   |
-    #                   | <-R_3-|   ...<-L_3-|                                   |
-    #                   |              <-L_3-|*.*.*.                             |
-    #                   |              | exactly one contigs starts with <-L_3-| |
-    # Expect <-L_3-| == reverse_complement(|-R_2->) inherent there are the same terminal of the same contig
-    # path1: |- L -> or |~Rrc~>
-    # path2: |- L -> or |~Rrc~>
-    # if |- L ->: just look for pair of |- R ->
-    # if |~Rrc~>: just look for pair of |~Lrc~>, equivalent to pair for |- L ->
-    #
-    path1_is_L = path1.rsplit("_", 1)[1].startswith("L")
-    path2_is_L = path2.rsplit("_", 1)[1].startswith("L")
-    path1_R_pair = link_pair[contig_name(path1) + ("_R" if path1_is_L else "_L")]
-    path2_L_pair = link_pair[contig_name(path2) + ("_R" if path2_is_L else "_L")]
-    return (
-        len(path1_R_pair) == 1
-        and len(path2_L_pair) == 1
-        and contig_name(path1_R_pair[0]) == contig_name(path2_L_pair[0])
-    )
-
-
-def the_dominant_one(path1: str, path2: str, cov: dict[str, float]):
-    """
-    get the dominant path from two equal paths
-    """
-    if cov[contig_name(path1)] >= cov[contig_name(path2)]:
-        return path1
-    else:
-        return path2
-
-
-def could_circulate(
-    point: str,
-    contig: str,
-    direction: Literal["L", "R"],
-    link_pair: dict[str, list[str]],
-    parsed_linkage: set[tuple[str, str]],
-    cov: dict[str, float],
-):
-    """
-    check if the path is circular with the current contig included
-    """
-    contig_pair = ""
-    other_direction = {"L": "_R", "R": "_L"}[direction]
-    if len(link_pair[point]) == 2:  # point is the same as "target" in join_walker
-        link_pair1, link_pair2 = link_pair[point]
-        if contig_name(link_pair1) == contig:
-            contig_pair = link_pair1
-        elif contig_name(link_pair2) == contig:
-            contig_pair = link_pair2
-        if contig_pair and not cov[contig_name(point)] < 1.5 * cov[contig]:
-            # 2 times is for repeat, but it is too risky, use 1.5 instead (same below)
-            contig_pair = ""
-    elif len(link_pair[point]) == 1:
-        (link_pair1,) = link_pair[point]
-        if contig_name(link_pair1) == contig:
-            contig_pair = link_pair1
-    return (
-        contig_pair
-        and contig_pair.endswith(other_direction)
-        and (contig + other_direction, point) in parsed_linkage
-    )
-
-
-def the_better_one(paths: Iterable[str], contig: str, cov: dict[str, float]):
-    """
-    Calculate the absolute differences in coverage
-    """
-    return min(paths, key=lambda x: abs(cov[contig] - cov[contig_name(x)]))
-
-
-def other_end_is_extendable(
-    end: str, self_circular: set[str], link_pair: dict[str, list[str]]
-):
-    """
-    check if the other end is extendable
-    """
-    if contig_name(end) in self_circular:
-        return False
-    return len(link_pair[get_target(end)]) > 0
-
-
-def is_ok_to_add(end: str, contig: str, self_circular: set[str], cov: dict[str, float]):
-    """
-    if the other end of a potential joining contig cannot be extended,
-    add only when it has a very similar coverage to that of the query contig
-    """
-    if contig_name(end) in self_circular:
-        return False
-    return (
-        0.9 * cov[contig] <= cov[contig_name(end)]
-        and cov[contig_name(end)] <= 1.11 * cov[contig]
-    )
-
-
-def not_checked(end_list: Iterable[str], checked: list[str]):
-    """
-    to see if a potential contig has been checked for adding or not
-    """
-    return not any(contig_name(end) in checked for end in end_list)
 
 
 def detect_self_circular(
@@ -352,189 +226,319 @@ def detect_self_circular(
     return ""
 
 
-def join_walker(
-    contig: str,
-    direction: Literal["L", "R"],
-    contig2join: dict[str, list[str]],
-    contig_checked: dict[str, list[str]],
-    contig2join_reason: dict[str, dict[str, str]],
-    path_circular: set[str],
-    path_circular_end: set[str],
-    parsed_linkage: set[tuple[str, str]],
+def check_self_circular_soft(sequence: Seq, min_over_len: int):
+    """check overlap shorter than maxK, while not shorter than mink"""
+    end_part = sequence[-min_over_len:]
+    if sequence.count(end_part) > 1:
+        expected_end = sequence.split(end_part, 1)[0] + end_part
+        if sequence.endswith(expected_end):
+            return len(expected_end)
+    return -1
+
+
+def get_contig2join(
+    query_set: frozenset[str],
+    orphan_end_query: frozenset[str],
+    parsed_linkage: frozenset[tuple[str, str]],
     cov: dict[str, float],
     link_pair: dict[str, list[str]],
-    one_path_end: set[str],
-    two_paths_end: set[str],
-    self_circular: set[str],
+    one_path_end: frozenset[str],
+    two_paths_end: frozenset[str],
+    self_circular: frozenset[str],
 ):
-    """
-    get potential joins for a given query
-    """
+    contig2join: dict[str, list[str]] = {}
+    contig_checked: dict[str, list[str]] = {}
+    contig2join_reason: dict[str, dict[str, str]] = {}
+    for contig in query_set:
+        contig2join[contig + "_L"] = []
+        contig2join[contig + "_R"] = []
+        contig_checked[contig + "_L"] = []
+        contig_checked[contig + "_R"] = []
+        contig2join_reason[contig] = {contig: "query"}
 
-    end = f"{contig}_{direction}"
-    len_before_walk = len(contig2join[end])
-    if len_before_walk == 0:
-        contig_checked[end].append(contig)
-        if end in one_path_end:
-            link_pair1 = link_pair[end][0]
-            if contig_name(link_pair1) != contig:
-                checked_reason = ""
-                # 1. link_pair1 is not point to a self-circulated contig
-                if other_end_is_extendable(
-                    link_pair1, self_circular=self_circular, link_pair=link_pair
-                ):
-                    # 2.1. link_pair1 can be extend in the next step
-                    checked_reason = "other_end_is_extendable"
-                elif is_ok_to_add(
-                    link_pair1, contig, self_circular=self_circular, cov=cov
-                ):
-                    # 2.2. link_pair1 has similar coverage with contig
-                    # however, it CANNOT be extend in the next step
-                    checked_reason = "is_ok_to_add"
-                if checked_reason and (end, link_pair1) in parsed_linkage:
-                    # 3. linkage between link_pair1 and end is supported by reads linkage
-                    contig2join[end].append(link_pair1)
-                    contig_checked[end].append(contig_name(link_pair1))
-                    contig2join_reason[contig][contig_name(link_pair1)] = checked_reason
-        elif end in two_paths_end:
-            # >contig<
-            #        |-end-|
-            #  .*.*.*|----->
-            #        |----->.*.*.*
-            #             >contig2<
-            #        |----->.*.*.*
-            #             >contig3<
-            # no more contigs starts with `|----->`
-            #
-            link_pair1, link_pair2 = link_pair[end]
-            if contig_name(link_pair1) != contig_name(link_pair2):
-                checked_reason = ""
-                if are_equal_paths(link_pair1, link_pair2, link_pair=link_pair):
-                    #             >contig2<
-                    #        |----->.*.   |=====>
-                    # >contig<            |=====>.*.*.*
-                    #  .*.*.*|----->            >contig4<
-                    #        |-end-|
-                    #        |----->   *.*|=====>
-                    #             >contig3<
-                    # no more contigs starts with `|----->` or ends with `|=====>`
-                    #
-                    link_pair_do = the_dominant_one(link_pair1, link_pair2, cov=cov)
-                    checked_reason = "are_equal_paths"
-                elif (
-                    cov[contig_name(link_pair1)] + cov[contig_name(link_pair2)]
-                    >= cov[contig] * 0.5
-                ):
-                    # 0.5 is ok, too big will get much fewer "Extended circular" ones.
-                    # choise the one with more similar abundance
-                    link_pair_do = the_better_one(link_pair[end], contig, cov=cov)
-                    checked_reason = "the_better_one"
-                if checked_reason and contig_name(link_pair_do) not in self_circular:
-                    contig2join[end].append(link_pair_do)
-                    contig_checked[end].append(contig_name(link_pair1))
-                    contig_checked[end].append(contig_name(link_pair2))
-                    contig2join_reason[contig][
-                        contig_name(link_pair_do)
-                    ] = checked_reason
-                    # TODO: also record the discarded one
-    else:
-        target = get_target(contig2join[end][-1])
-        if target in one_path_end:
-            link_pair1 = link_pair[target][0]
-            if not_checked([link_pair1], contig_checked[end]):
-                # inherent contig_name(link_pair1) != contig
-                # the same as ablove
-                checked_reason = ""
-                if other_end_is_extendable(
-                    link_pair1, self_circular=self_circular, link_pair=link_pair
-                ):
-                    checked_reason = "other_end_is_extendable"
-                elif is_ok_to_add(
-                    link_pair1, contig, self_circular=self_circular, cov=cov
-                ):
-                    checked_reason = "is_ok_to_add"
-                if checked_reason and (target, link_pair1) in parsed_linkage:
-                    contig2join[end].append(link_pair1)
-                    contig_checked[end].append(contig_name(link_pair1))
-                    contig2join_reason[contig][contig_name(link_pair1)] = checked_reason
-            elif could_circulate(
-                target,
-                contig,
-                direction,
-                link_pair=link_pair,
-                parsed_linkage=parsed_linkage,
-                cov=cov,
-            ):
-                # 1. target is extendable (the only link_pair here)
-                path_circular.add(contig)
-                path_circular_end.add(end)
-                contig2join_reason[contig][contig_name(target)] = "could_circulate"
-        elif target in two_paths_end:
-            link_pair1, link_pair2 = link_pair[target]
-            if contig_name(link_pair1) != contig_name(link_pair2):
+    path_circular_end: set[str] = set()
+
+    def other_end_is_extendable(end: str):
+        """True if the other end is extendable"""
+        if contig_name(end) in self_circular:
+            return False
+        return len(link_pair[get_target(end)]) > 0
+
+    def is_ok_to_add(end: str, contig: str):
+        """
+        if the other end of a potential joining contig cannot be extended,
+        add only when it has a very similar coverage to that of the query contig
+        """
+        if contig_name(end) in self_circular:
+            return False
+        return (
+            0.9 * cov[contig] <= cov[contig_name(end)]
+            and cov[contig_name(end)] <= 1.11 * cov[contig]
+        )
+
+    def are_equal_paths(path1: str, path2: str):
+        """
+        True if two paths are equal
+
+        .. code-block::
+          >contig<
+                 |-end-|
+           .*.*.*|----->
+          path1, path2      |           | exactly one contigs starts with |-R_2->    |
+                 |- L ->... |           |-R_2->.*.*.*                                |
+                 >contig2   | >contig2                                               |
+                 |~Rrc~>*** | |-L_2->...|-R_2->                                      |
+                   contig3< |             contig3<                                   |
+                            | <-R_3-|   ...<-L_3-|                                   |
+                            |              <-L_3-|*.*.*.                             |
+                            |              | exactly one contigs starts with <-L_3-| |
+          Expect <-L_3-| == reverse_complement(|-R_2->) inherent there are the same terminal of the same contig
+          path1: |- L -> or |~Rrc~>
+          path2: |- L -> or |~Rrc~>
+          if |- L ->: just look for pair of |- R ->
+          if |~Rrc~>: just look for pair of |~Lrc~>, equivalent to pair for |- L ->
+        """
+        path1_is_L = path1.rsplit("_", 1)[1].startswith("L")
+        path2_is_L = path2.rsplit("_", 1)[1].startswith("L")
+        path1_R_pair = link_pair[contig_name(path1) + ("_R" if path1_is_L else "_L")]
+        path2_L_pair = link_pair[contig_name(path2) + ("_R" if path2_is_L else "_L")]
+        return (
+            len(path1_R_pair) == 1
+            and len(path2_L_pair) == 1
+            and contig_name(path1_R_pair[0]) == contig_name(path2_L_pair[0])
+        )
+
+    def the_dominant_one(path1: str, path2: str):
+        """get the dominant path from two equal paths"""
+        if cov[contig_name(path1)] >= cov[contig_name(path2)]:
+            return path1
+        else:
+            return path2
+
+    def the_better_one(paths: Iterable[str], contig: str):
+        """Calculate the absolute differences in coverage"""
+        return min(paths, key=lambda x: abs(cov[contig] - cov[contig_name(x)]))
+
+    def could_circulate(
+        point: str,
+        contig: str,
+        direction: Literal["L", "R"],
+    ):
+        """True if the path is circular with the current contig included"""
+        contig_pair = ""
+        other_direction = {"L": "_R", "R": "_L"}[direction]
+        if len(link_pair[point]) == 2:  # point is the same as "target" in join_walker
+            link_pair1, link_pair2 = link_pair[point]
+            if contig_name(link_pair1) == contig:
+                contig_pair = link_pair1
+            elif contig_name(link_pair2) == contig:
+                contig_pair = link_pair2
+            if contig_pair and not cov[contig_name(point)] < 1.5 * cov[contig]:
+                # 2 times is for repeat, but it is too risky, use 1.5 instead (same below)
+                contig_pair = ""
+        elif len(link_pair[point]) == 1:
+            (link_pair1,) = link_pair[point]
+            if contig_name(link_pair1) == contig:
+                contig_pair = link_pair1
+        return (
+            contig_pair
+            and contig_pair.endswith(other_direction)
+            and (contig + other_direction, point) in parsed_linkage
+        )
+
+    def not_checked(end_list: Iterable[str], checked: list[str]):
+        """True if all contig in end_list has been checked for adding or not"""
+        return not any(contig_name(end) in checked for end in end_list)
+
+    def join_walker(contig: str, direction: Literal["L", "R"]):
+        """
+        get potential joins for a given query
+        """
+
+        end = f"{contig}_{direction}"
+        len_before_walk = len(contig2join[end])
+        if len_before_walk == 0:
+            contig_checked[end].append(contig)
+            if end in one_path_end:
+                link_pair1 = link_pair[end][0]
+                if contig_name(link_pair1) != contig:
+                    checked_reason = ""
+                    # 1. link_pair1 is not point to a self-circulated contig
+                    if other_end_is_extendable(link_pair1):
+                        # 2.1. link_pair1 can be extend in the next step
+                        checked_reason = "other_end_is_extendable"
+                    elif is_ok_to_add(link_pair1, contig):
+                        # 2.2. link_pair1 has similar coverage with contig
+                        # however, it CANNOT be extend in the next step
+                        checked_reason = "is_ok_to_add"
+                    if checked_reason and (end, link_pair1) in parsed_linkage:
+                        # 3. linkage between link_pair1 and end is supported by reads linkage
+                        contig2join[end].append(link_pair1)
+                        contig_checked[end].append(contig_name(link_pair1))
+                        contig2join_reason[contig][
+                            contig_name(link_pair1)
+                        ] = checked_reason
+            elif end in two_paths_end:
                 # >contig<
-                # .*.|----->
-                #    >contig of target<
-                #    |----->*.*.*.|----->
-                #                 |-----| target
-                #                 |----->.*.*.*
-                #                      >contig2<
-                #                 |----->.*.*.*
-                #                      >contig3<
+                #        |-end-|
+                #  .*.*.*|----->
+                #        |----->.*.*.*
+                #             >contig2<
+                #        |----->.*.*.*
+                #             >contig3<
                 # no more contigs starts with `|----->`
                 #
-                if cov[contig_name(target)] < 1.9 * cov[contig]:
-                    # given a contig
-                    #   |-query contig->[repeat region]|-contig2->[repeat region]|-contig3->
-                    # where len(repeat region) > maxk, then the linkage looks like:
-                    #   |-query contig->[repea>                           | 1* cov
-                    #                   [repeat region]                   | 2* cov
-                    #                           |egion]|-contig2->[repea> | 1* cov
-                    #                           |egion]|-contig3->        | 1* cov
-                    # where we can only confirm:
-                    #   |-query contig->[repeat region]
-                    # If we query the [repeat region], then never mind.
-                    #
-                    if not_checked([link_pair1, link_pair2], contig_checked[end]):
-                        checked_reason = ""
-                        if are_equal_paths(link_pair1, link_pair2, link_pair=link_pair):
-                            link_pair_do = the_dominant_one(
-                                link_pair1, link_pair2, cov=cov
-                            )
-                            checked_reason = "are_equal_paths"
-                        elif (
-                            cov[contig_name(link_pair1)] + cov[contig_name(link_pair2)]
-                            >= cov[contig] * 0.5
-                        ):
-                            # 0.5 is ok, too big will get much fewer "Extended circular" ones.
-                            link_pair_do = the_better_one(
-                                link_pair[target], contig, cov=cov
-                            )
-                            checked_reason = "the_better_one"
-                        if (
-                            checked_reason
-                            and contig_name(link_pair_do) not in self_circular
-                        ):
-                            contig2join[end].append(link_pair_do)
-                            contig_checked[end].append(contig_name(link_pair1))
-                            contig_checked[end].append(contig_name(link_pair2))
-                            contig2join_reason[contig][
-                                contig_name(link_pair_do)
-                            ] = checked_reason
-                    elif could_circulate(
-                        target,
-                        contig,
-                        direction,
-                        link_pair=link_pair,
-                        parsed_linkage=parsed_linkage,
-                        cov=cov,
+                link_pair1, link_pair2 = link_pair[end]
+                if contig_name(link_pair1) != contig_name(link_pair2):
+                    checked_reason = ""
+                    if are_equal_paths(link_pair1, link_pair2):
+                        #             >contig2<
+                        #        |----->.*.   |=====>
+                        # >contig<            |=====>.*.*.*
+                        #  .*.*.*|----->            >contig4<
+                        #        |-end-|
+                        #        |----->   *.*|=====>
+                        #             >contig3<
+                        # no more contigs starts with `|----->` or ends with `|=====>`
+                        #
+                        link_pair_do = the_dominant_one(link_pair1, link_pair2)
+                        checked_reason = "are_equal_paths"
+                    elif (
+                        cov[contig_name(link_pair1)] + cov[contig_name(link_pair2)]
+                        >= cov[contig] * 0.5
                     ):
-                        path_circular.add(contig)
-                        path_circular_end.add(end)
+                        # 0.5 is ok, too big will get much fewer "Extended circular" ones.
+                        # choise the one with more similar abundance
+                        link_pair_do = the_better_one(link_pair[end], contig)
+                        checked_reason = "the_better_one"
+                    if (
+                        checked_reason
+                        and contig_name(link_pair_do) not in self_circular
+                    ):
+                        contig2join[end].append(link_pair_do)
+                        contig_checked[end].append(contig_name(link_pair1))
+                        contig_checked[end].append(contig_name(link_pair2))
                         contig2join_reason[contig][
-                            contig_name(target)
-                        ] = "could_circulate"
-    return len_before_walk < len(contig2join[end])
+                            contig_name(link_pair_do)
+                        ] = checked_reason
+                        # TODO: also record the discarded one
+        else:
+            target = get_target(contig2join[end][-1])
+            if target in one_path_end:
+                link_pair1 = link_pair[target][0]
+                if not_checked([link_pair1], contig_checked[end]):
+                    # inherent contig_name(link_pair1) != contig
+                    # the same as ablove
+                    checked_reason = ""
+                    if other_end_is_extendable(link_pair1):
+                        checked_reason = "other_end_is_extendable"
+                    elif is_ok_to_add(link_pair1, contig):
+                        checked_reason = "is_ok_to_add"
+                    if checked_reason and (target, link_pair1) in parsed_linkage:
+                        contig2join[end].append(link_pair1)
+                        contig_checked[end].append(contig_name(link_pair1))
+                        contig2join_reason[contig][
+                            contig_name(link_pair1)
+                        ] = checked_reason
+                elif could_circulate(target, contig, direction):
+                    # 1. target is extendable (the only link_pair here)
+                    path_circular_end.add(end)
+                    contig2join_reason[contig][contig_name(target)] = "could_circulate"
+            elif target in two_paths_end:
+                link_pair1, link_pair2 = link_pair[target]
+                if contig_name(link_pair1) != contig_name(link_pair2):
+                    # >contig<
+                    # .*.|----->
+                    #    >contig of target<
+                    #    |----->*.*.*.|----->
+                    #                 |-----| target
+                    #                 |----->.*.*.*
+                    #                      >contig2<
+                    #                 |----->.*.*.*
+                    #                      >contig3<
+                    # no more contigs starts with `|----->`
+                    #
+                    if cov[contig_name(target)] < 1.9 * cov[contig]:
+                        # given a contig
+                        #   |-query contig->[repeat region]|-contig2->[repeat region]|-contig3->
+                        # where len(repeat region) > maxk, then the linkage looks like:
+                        #   |-query contig->[repea>                           | 1* cov
+                        #                   [repeat region]                   | 2* cov
+                        #                           |egion]|-contig2->[repea> | 1* cov
+                        #                           |egion]|-contig3->        | 1* cov
+                        # where we can only confirm:
+                        #   |-query contig->[repeat region]
+                        # If we query the [repeat region], then never mind.
+                        #
+                        if not_checked([link_pair1, link_pair2], contig_checked[end]):
+                            checked_reason = ""
+                            if are_equal_paths(link_pair1, link_pair2):
+                                link_pair_do = the_dominant_one(link_pair1, link_pair2)
+                                checked_reason = "are_equal_paths"
+                            elif (
+                                cov[contig_name(link_pair1)]
+                                + cov[contig_name(link_pair2)]
+                                >= cov[contig] * 0.5
+                            ):
+                                # 0.5 is ok, too big will get much fewer "Extended circular" ones.
+                                link_pair_do = the_better_one(link_pair[target], contig)
+                                checked_reason = "the_better_one"
+                            if (
+                                checked_reason
+                                and contig_name(link_pair_do) not in self_circular
+                            ):
+                                contig2join[end].append(link_pair_do)
+                                contig_checked[end].append(contig_name(link_pair1))
+                                contig_checked[end].append(contig_name(link_pair2))
+                                contig2join_reason[contig][
+                                    contig_name(link_pair_do)
+                                ] = checked_reason
+                        elif could_circulate(target, contig, direction):
+                            path_circular_end.add(end)
+                            contig2join_reason[contig][
+                                contig_name(target)
+                            ] = "could_circulate"
+        return len_before_walk < len(contig2join[end])
+
+    for contig in tqdm(
+        query_set - (orphan_end_query | self_circular),
+        desc="Detecting joins of contigs. ",
+    ):
+        # extend each contig from both directions
+        while result_L := join_walker(contig, "L"):
+            pass
+        while result_R := join_walker(contig, "R"):
+            pass
+    return contig2join, contig2join_reason, path_circular_end
+
+
+def get_contig2assembly(contig2join: dict[str, list[str]], path_circular_end: set[str]):
+    contig2assembly: dict[str, set[str]] = {}
+    for item in contig2join:
+        if len(contig2join[item]) == 0:
+            continue
+        contig = contig_name(item)
+        # detect extented query contigs
+        if contig not in contig2assembly:
+            contig2assembly[contig] = {contig}
+        if (
+            contig + "_L" in path_circular_end
+            and contig + "_R" not in path_circular_end
+        ):
+            # here, only one path can be found to be circulated.
+            contig2assembly[contig].update(
+                (contig_name(i) for i in contig2join[contig + "_L"])
+            )
+        elif (
+            contig + "_L" not in path_circular_end
+            and contig + "_R" in path_circular_end
+        ):
+            contig2assembly[contig].update(
+                (contig_name(i) for i in contig2join[contig + "_R"])
+            )
+        else:
+            contig2assembly[contig].update((contig_name(i) for i in contig2join[item]))
+    return contig2assembly
 
 
 def join_seqs(
@@ -644,7 +648,7 @@ def summary_fasta(
     fasta_file: str,
     length: int,
     cov: dict[str, float],
-    self_circular: set[str],
+    self_circular: frozenset[str],
     self_circular_non_expected_overlap: dict[str, int],
 ):
     """
@@ -826,6 +830,49 @@ def get_link_pair(assem_fa: str, maxk_length: int):
     return header2seq, header2len, link_pair
 
 
+def check_Y_paths(
+    link_pair: dict[str, list[str]],
+    logfile: str,
+):
+    one_path_end: set[str] = set()  # the end of contigs with one potential join
+    two_paths_end: set[str] = set()  # the end of contigs with two potential joins
+
+    if logfile:
+        p = open(logfile, "w")
+    for item in tqdm(sorted(link_pair), desc="Collect one_path_end and two_path_end"):
+        if len(link_pair[item]) == 1:  # and len(link_pair[link_pair[item][0]]) > 1:
+            # | >contig3 or more contigs ends with `|----->` < |
+            # |  .*.*.*|----->                                 |
+            #   >contig1<
+            #    .*.*.*|----->
+            #          |----->.*.*.*
+            #               >contig2<
+            # |        no more contigs starts with `|----->` < |
+            #
+            # add one joining end to a list, its pair may have one or more joins
+            one_path_end.add(item)
+        elif (
+            len(link_pair[item]) == 2
+            and len(link_pair[link_pair[item][0]]) == 1
+            and len(link_pair[link_pair[item][1]]) == 1
+        ):
+            # |          no more contigs ends with `|----->` < |
+            #   >contig1<
+            #    .*.*.*|----->
+            #          |----->.*.*.*
+            #               >contig2<
+            #          |----->.*.*.*
+            #               >contig3<
+            # |        no more contigs starts with `|----->` < |
+            #
+            # add two joining end to a list, each of its pairs should only have one join
+            two_paths_end.add(item)
+        # print link pairs into a file for check if interested
+        if logfile:
+            print(item, *sorted(link_pair[item]), sep="\t", file=p)
+    return one_path_end, two_paths_end
+
+
 def get_cov(coverage_file: str):
     cov: dict[str, float] = {}  # the coverage of contigs
     with open(coverage_file) as coverage:
@@ -841,6 +888,32 @@ def get_cov(coverage_file: str):
             header_cov, cov_value = line.strip().split("\t")[:2]
             cov[header_cov] = round(float(cov_value), 3)
     return cov
+
+
+def get_query_set(query_fa: str, uniset: dict[str, T]):
+    query_set: set[str] = set()
+
+    with open(query_fa) as f:
+        first_line = next(f)
+        if first_line.startswith(">"):
+            # if the query file is in fasta format
+            query_header = lambda x: (
+                str(i.id).strip() for i in SeqIO.parse(x, "fasta")
+            )
+        else:
+            # if the query file is in text format
+            query_header = lambda x: (line.strip().split(" ")[0] for line in x)
+    with open(query_fa) as query_file:
+        for header in query_header(query_file):
+            # some queries may not in the whole assembly, should be rare though.
+            if header in uniset:
+                query_set.add(header)
+            else:
+                print(
+                    f"Query {header} is not in your whole contig fasta file, please check!",
+                    flush=True,
+                )
+    return query_set
 
 
 def get_parsed_linkage(
@@ -988,7 +1061,7 @@ def get_parsed_linkage(
                     #
                     parsed_contig_spanned_by_PE_reads.add(contig)
 
-    return parsed_linkage, parsed_contig_spanned_by_PE_reads
+    return frozenset(parsed_linkage), frozenset(parsed_contig_spanned_by_PE_reads)
 
 
 def get_query2groups(contig2assembly: dict[str, set[str]], query_set: set[str]):
@@ -1121,51 +1194,13 @@ def main(
     # save all paired links to a file
     log_info("[03/23]", "Writing contig end joining pairs.", log)
 
-    one_path_end: set[str] = set()  # the end of contigs with one potential join
-    two_paths_end: set[str] = set()  # the end of contigs with two potential joins
-
-    with open(f"{working_dir}/COBRA_end_joining_pairs.txt", "w") as p:
-        counter_one_path_end, counter_two_path_end, counter_other_end = 0, 0, 0
-        for item in tqdm(
-            sorted(link_pair), desc="Collect one_path_end and two_path_end"
-        ):
-            if len(link_pair[item]) == 1:  # and len(link_pair[link_pair[item][0]]) > 1:
-                # | >contig3 or more contigs ends with `|----->` < |
-                # |  .*.*.*|----->                                 |
-                #   >contig1<
-                #    .*.*.*|----->
-                #          |----->.*.*.*
-                #               >contig2<
-                # |        no more contigs starts with `|----->` < |
-                #
-                # add one joining end to a list, its pair may have one or more joins
-                one_path_end.add(item)
-                counter_one_path_end += 1
-            elif (
-                len(link_pair[item]) == 2
-                and len(link_pair[link_pair[item][0]]) == 1
-                and len(link_pair[link_pair[item][1]]) == 1
-            ):
-                # |          no more contigs ends with `|----->` < |
-                #   >contig1<
-                #    .*.*.*|----->
-                #          |----->.*.*.*
-                #               >contig2<
-                #          |----->.*.*.*
-                #               >contig3<
-                # |        no more contigs starts with `|----->` < |
-                #
-                # add two joining end to a list, each of its pairs should only have one join
-                two_paths_end.add(item)
-                counter_two_path_end += 1
-            else:
-                counter_other_end += 1
-            # print link pairs into a file for check if interested
-            print(item, *sorted(link_pair[item]), sep="\t", file=p)
+    (one_path_end, two_paths_end) = check_Y_paths(
+        link_pair=link_pair, logfile=f"{working_dir}/COBRA_end_joining_pairs.txt"
+    )
     log.write(
-        f"Found {counter_one_path_end} one path end, "
-        f"{counter_two_path_end} two path end, "
-        f"{counter_other_end} other end.\n"
+        f"Among {len(link_pair)} link pairs, found"
+        f" {len(one_path_end)} one path end,"
+        f" {len(two_paths_end)} two paths end.\n"
     )
     ##
     # read and save the coverage of all contigs
@@ -1180,35 +1215,16 @@ def main(
     # open the query file and save the information
 
     log_info("[05/23]", "Getting query contig list. ", log, "")
-    query_set: set[str] = set()
-
-    with open(f"{query_fa}") as query_file:
-        # if the query file is in fasta format
-        if determine_file_format(query_fa) == "fasta":
-            query_header = (str(i.id).strip() for i in SeqIO.parse(query_file, "fasta"))
-        else:  # if the query file is in text format
-            query_header = (line.strip().split(" ")[0] for line in query_file)
-        for header in query_header:
-            # some queries may not in the whole assembly, should be rare though.
-            if header in header2seq:
-                query_set.add(header)
-            else:
-                print(
-                    f"Query {header} is not in your whole contig fasta file, please check!",
-                    flush=True,
-                )
+    query_set = get_query_set(f"{query_fa}", uniset=header2seq)
 
     # distinguish orphan_end_query and non_orphan_end_query:
-    orphan_end_query: set[str] = set()
-    non_orphan_end_query: set[str] = set()
-    for header in query_set:
-        if (
-            header + "_L" not in link_pair.keys()
-            and header + "_R" not in link_pair.keys()
-        ):
-            orphan_end_query.add(header)
-        else:
-            non_orphan_end_query.add(header)
+    orphan_end_query = {
+        header
+        for header in query_set
+        if header + "_L" not in link_pair.keys()
+        and header + "_R" not in link_pair.keys()
+    }
+    non_orphan_end_query = query_set - orphan_end_query
 
     #
     log.write(
@@ -1237,39 +1253,35 @@ def main(
     ##
     log_info("[08/23]", "Detecting self_circular contigs. ", log)
 
-    self_circular: set[str] = set()
-    for contig in tqdm(non_orphan_end_query, desc="Detecting self_circular contigs."):
+    self_circular = {
+        contig
+        for contig in tqdm(
+            non_orphan_end_query, desc="Detecting self_circular contigs."
+        )
         if detect_self_circular(
             contig,
             one_path_end=one_path_end,
             two_paths_end=two_paths_end,
             link_pair=link_pair,
-        ):
-            self_circular.add(contig)
-
+        )
+    }
     debug = open(f"{working_dir}/debug.txt", "w")
 
     # for debug
     print(f"# self_circular: {len(self_circular)}", file=debug, flush=True)
     print(sorted(self_circular), file=debug, flush=True)
+
     # orphan end queries info
     # determine potential self_circular contigs from contigs with orphan end
-
     min_over_len = mink - 1 if assembler == "idba" else mink
     # determine if there is DTR for those query with orphan ends, if yes, assign as self_circular as well
-    self_circular_non_expected_overlap: dict[str, int] = {}
-    for contig in parsed_contig_spanned_by_PE_reads:
-        sequence = header2seq[contig]
-        end_part = sequence[-min_over_len:]
-        if sequence.count(end_part) > 1:
-            if sequence.count(end_part) > 2:
-                print(contig)
-            expected_end = sequence.split(end_part, 1)[0] + end_part
-            if sequence.endswith(expected_end):
-                self_circular_non_expected_overlap[contig] = len(expected_end)
-
-    orphan_end_query_1 = set(orphan_end_query)
-    orphan_end_query = orphan_end_query - self_circular_non_expected_overlap.keys()
+    self_circular_non_expected_overlap = {
+        contig: l
+        for contig in parsed_contig_spanned_by_PE_reads
+        if (l := check_self_circular_soft(header2seq[contig], min_over_len)) > 0
+    }
+    orphan_end_query_1 = frozenset(orphan_end_query)
+    orphan_end_query -= self_circular_non_expected_overlap.keys()
 
     # debug
     print(
@@ -1283,56 +1295,17 @@ def main(
     # walk the joins
     log_info("[09/23]", "Detecting joins of contigs. ", log)
 
-    contig2join: dict[str, list[str]] = {}
-    contig_checked: dict[str, list[str]] = {}
-    contig2join_reason: dict[str, dict[str, str]] = {}
-    for contig in query_set:
-        contig2join[contig + "_L"] = []
-        contig2join[contig + "_R"] = []
-        contig_checked[contig + "_L"] = []
-        contig_checked[contig + "_R"] = []
-        contig2join_reason[contig] = {contig: "query"}
-
-    path_circular_end: set[str] = set()
-    path_circular: set[str] = set()
-    for contig in tqdm(
-        query_set - (orphan_end_query | self_circular),
-        desc="Detecting joins of contigs. ",
-    ):
-        # extend each contig from both directions
-        while result_L := join_walker(
-            contig,
-            "L",
-            contig2join=contig2join,
-            contig_checked=contig_checked,
-            contig2join_reason=contig2join_reason,
-            path_circular=path_circular,
-            path_circular_end=path_circular_end,
-            parsed_linkage=parsed_linkage,
-            cov=cov,
-            link_pair=link_pair,
-            one_path_end=one_path_end,
-            two_paths_end=two_paths_end,
-            self_circular=self_circular,
-        ):
-            pass
-        while result_R := join_walker(
-            contig,
-            "R",
-            contig2join=contig2join,
-            contig_checked=contig_checked,
-            contig2join_reason=contig2join_reason,
-            path_circular=path_circular,
-            path_circular_end=path_circular_end,
-            parsed_linkage=parsed_linkage,
-            cov=cov,
-            link_pair=link_pair,
-            one_path_end=one_path_end,
-            two_paths_end=two_paths_end,
-            self_circular=self_circular,
-        ):
-            pass
-
+    contig2join, contig2join_reason, path_circular_end = get_contig2join(
+        query_set=query_set,
+        orphan_end_query=frozenset(orphan_end_query),
+        parsed_linkage=parsed_linkage,
+        cov=cov,
+        link_pair=link_pair,
+        one_path_end=one_path_end,
+        two_paths_end=two_paths_end,
+        self_circular=frozenset(self_circular),
+    )
+    path_circular = {contig_name(i) for i in path_circular_end}
     print("# path_circular", file=debug, flush=True)
     print(sorted(path_circular), file=debug, flush=True)
     ##
@@ -1352,49 +1325,23 @@ def main(
     ##
     # get the fail_to_join contigs, but not due to orphan end
     # the simplest situation
-    failed_join_list = []
-    for contig in query_set:
-        if contig + "_L" in link_pair or contig + "_R" in link_pair:
-            if (
-                contig not in self_circular
-                and len(contig2join[contig + "_L"]) == 0
-                and len(contig2join[contig + "_R"]) == 0
-            ):
-                failed_join_list.append(contig)
+    failed_join_potential = frozenset(
+        contig
+        for contig in query_set
+        if (
+            (contig + "_L" in link_pair or contig + "_R" in link_pair)
+            and contig not in self_circular
+            and len(contig2join[contig + "_L"]) == 0
+            and len(contig2join[contig + "_R"]) == 0
+        )
+    )
+    print("# failed_join_potential", file=debug, flush=True)
+    print(sorted(failed_join_potential), file=debug, flush=True)
 
-    print("# 1failed_join_list", file=debug, flush=True)
-    print(failed_join_list, file=debug, flush=True)
-
-    failed_join_list_back = list(failed_join_list)
-    path_circular_back = set(path_circular)
     ##
     # get the joining paths
     log_info("[11/23]", "Checking for invalid joining: sharing queries.", log)
-    contig2assembly: dict[str, set[str]] = {}
-    for item in contig2join:
-        if len(contig2join[item]) == 0:
-            continue
-        contig = contig_name(item)
-        # detect extented query contigs
-        if contig not in contig2assembly:
-            contig2assembly[contig] = {contig}
-        if (
-            contig + "_L" in path_circular_end
-            and contig + "_R" not in path_circular_end
-        ):
-            # here, only one path can be found to be circulated.
-            contig2assembly[contig].update(
-                (contig_name(i) for i in contig2join[contig + "_L"])
-            )
-        elif (
-            contig + "_L" not in path_circular_end
-            and contig + "_R" in path_circular_end
-        ):
-            contig2assembly[contig].update(
-                (contig_name(i) for i in contig2join[contig + "_R"])
-            )
-        else:
-            contig2assembly[contig].update((contig_name(i) for i in contig2join[item]))
+    contig2assembly = get_contig2assembly(contig2join, path_circular_end)
 
     # for debug
     print("# contig2assembly", file=debug, flush=True)
@@ -1403,10 +1350,9 @@ def main(
 
     pd.Series(
         {k: frozenset(v) for k, v in contig2assembly.items()}, name="assembly"
-    ).sort_index().drop_duplicates().to_csv(
+    ).sort_index().drop_duplicates().apply(sorted).to_csv(
         f"{working_dir}/contig2assembly.tsv", sep="\t"
     )
-    failed_join_diff: set[str] = set()
 
     query2groups = dict(
         enumerate(
@@ -1428,19 +1374,23 @@ def main(
             list[str],
         ],
     ] = {}
-    for groupi, group in query2groups.items():
+    for groupi in query2groups:
+        group = query2groups[groupi]
         # group: rep_query: {rep_query in the path}
         if len(group) == 1:
             check_assembly_reason[list(group)[0]] = groupi, "standalone", []
         else:
             subsets = sorted(group, key=lambda q: len(group[q]))
-            subset_trunks: dict[str, tuple[list[str], list[str]]] = {}
+            this = subsets.pop(0)
+            subset_trunks: dict[str, tuple[list[str], list[str]]] = {this: ([], [this])}
             subset_unextendable: dict[str, set[str]] = {}
             # assert all(i == v[-1] for i, v in subset_trunks.items())
             #        and values in v is sorted subset.
             while subsets:
                 # start from the shortest path
                 this = subsets.pop(0)
+                if this == "k141_7416882":
+                    break
                 this_feature: dict[
                     Literal[
                         "has_disjoint_found",
@@ -1470,7 +1420,12 @@ def main(
                             # k141_4: [k141_1        , k141_4] | - discard
                             #
                             this_feature.setdefault("has_disjoint", []).append(frag)
-                        # else frag already has been captured by a subset_cannot_extend
+                        elif frag in subset_unextendable:
+                            this_feature.setdefault("has_disjoint_found", []).append(
+                                frag
+                            )
+                        # else frag already has been captured by a subset_cannot_extend,
+                        # or totally the same of something
                     else:
                         # k141_2: [k141_1, k141_3]         |
                         # k141_5: [              , k141_4] | + wait to create new item
@@ -1482,7 +1437,9 @@ def main(
                         "conflict_query",
                         this_feature["has_disjoint"],
                     )
-                    for frag in this_feature["has_disjoint"]:
+                    for frag in this_feature["has_disjoint"] + this_feature.get(
+                        "is_subset_of", []
+                    ):
                         # k141_1: [k141_1, k141_3]                 |
                         # k141_3: [      , k141_3,       ]         | *- revert item
                         # k141_5: [      , k141_3, k141_4]         |
@@ -1490,7 +1447,11 @@ def main(
                         frags = subset_trunks[frag][1]
                         # find the not-conflict one
                         for fragi in range(len(frags)):
-                            if not group[frags[fragi]] < group[this]:
+                            if (group[frags[fragi]] < group[this]) or not group[
+                                frags[fragi]
+                            ] & group[this]:
+                                pass
+                            else:
                                 break
                         if fragi:
                             # common subset found
@@ -1498,6 +1459,9 @@ def main(
                                 subset_trunks.pop(frag)[0],
                                 frags[:fragi],
                             )
+                        else:
+                            subset_trunks.pop(frag)
+                            subset_unextendable[this] = {this}
                         # frozen it, or record in because this common subset cannot be bigger
                         subset_unextendable[frags[max(fragi - 1, 0)]] = set(
                             frags[fragi:]
@@ -1533,8 +1497,14 @@ def main(
                         ), [this]
                 else:  # if set(this_feature) == {"sub_standalong"}:
                     # k141_5: [k141_4]                 | + create new item
-                    subset_trunks[this] = [this], [this]
-            for subset in subset_trunks:
+                    subset_trunks[this] = [], [this]
+                print(
+                    f"{this=}\n"
+                    f"{this_feature=}\n"
+                    f"{subset_trunks=}\n"
+                    f"{subset_unextendable=}\n"
+                )
+            for subset in subset_trunks - subset_unextendable.keys():
                 # subset          = [k141_1, k141_2, k141_3, k141_4]
                 # subset_circular = [      , k141_2,       , k141_4]
                 #  k141_1: 1 | not circular                              | * keep if k141_3 in k141_2
@@ -1543,7 +1513,7 @@ def main(
                 #  k141_4: 8 | circular and with another circular inside |
                 #
                 frags = list(subset_trunks[subset][1])
-                if any(i for i in subset_trunks[subset][1] if i in path_circular):
+                if any(i for i in subset_trunks[subset][0] if i in path_circular):
                     # all the contig assemblies are based on another assembly,
                     # which is already circular and considered in another iter of this for-loop
                     check_assembly_reason[subset] = groupi, "circular_in_sub", frags
@@ -1610,19 +1580,101 @@ def main(
         for i, v in check_assembly_reason.items()
         if v[1] in {"standalone", "longest"}
     }
-    checked_group = {v[0] for v in checked_assembly.values()} - {
-        v[0] for v in check_assembly_reason.values() if v[1] == "conflict_query"
+    failed_group_conflict = {
+        v[0] for k, v in check_assembly_reason.items() if v[1] == "conflict_query"
     }
+    failed_group_circular_6 = {
+        v[0] for k, v in check_assembly_reason.items() if v[1] == "circular_6_conflict"
+    }
+    failed_join_conflict = {
+        j: g
+        for g in failed_group_conflict
+        for i in query2groups[g]
+        for j in contig2assembly[i]
+        if j in query_set
+    }
+    failed_join_circular_6 = {
+        j: g
+        for g in failed_group_circular_6
+        for i in query2groups[g]
+        for j in contig2assembly[i]
+        if j in query_set
+    }
+    failed_groups = failed_group_conflict | failed_group_circular_6
+    checked_assembly_strict = {
+        j: v[0]
+        for k, v in checked_assembly.items()
+        if v[0] not in failed_groups
+        for j in contig2assembly[k]
+        if j in contig2assembly
+    }
+    non_orphan_end_query - (
+        failed_join_potential
+        | self_circular
+        | self_circular_non_expected_overlap.keys()
+        | failed_join_conflict.keys()
+        | failed_join_circular_6.keys()
+        | checked_assembly_strict.keys()
+    )
+
+    failed_join_list = (
+        failed_join_potential
+        | failed_join_conflict.keys()
+        | failed_join_circular_6.keys()
+    )
+
+    def check_query(query: str):
+        print(
+            f"{query=}",
+            f"{query in query_set=}",
+            f"{contig2assembly.get(query)=}",
+            f"{check_assembly_reason.get(query)=}",
+            f"{query in path_circular=}",
+            f"{query in failed_join_potential=}",
+            f"{query in failed_join_conflict=}",
+            f"{query in failed_join_circular_6=}",
+            f"{query in failed_groups=}",
+            f"{query in checked_assembly_strict=}",
+            sep="\n",
+        )
+        print(query2groups.get(check_assembly_reason.get(query, [-1])[0]))
+        print({i: contig2assembly.get(i) for i in contig2assembly.get(query)})
+        print({i: check_assembly_reason.get(i) for i in contig2assembly.get(query)})
+        print(
+            {
+                k: v
+                for k, v in query2groups.items()
+                if v.keys() & contig2assembly.get(query, {})
+            }
+        )
+
+    check_query("k141_23763925")
+    {k: v for k, v in check_assembly_reason.items() if v[0] == 26768}
+    print(
+        f"{len(query_set)=}",
+        f"{len(contig2assembly)=}",
+        f"{len(failed_join_potential)=}",
+        f"{len(failed_join_conflict)=}",
+        f"{len(failed_join_circular_6)=}",
+        f"{len(failed_groups)=}",
+        f"{len(checked_assembly_strict)=}",
+    )
+    sum(
+        len(i)
+        for i in (
+            failed_join_conflict,
+            failed_join_circular_6,
+            failed_groups,
+            checked_assembly_strict,
+        )
+    )
 
     #
-    def all_contigs_in_the_path_are_good(contig_set):
-        total = 0
+    def all_contigs_in_the_path_are_good(contig_set: set[str]):
         for contig in contig_set:
             if contig in failed_join_list:
-                total += 1
-            else:
-                pass
-        return total == 0
+                return False
+        return True
 
     ##
     # get the joining order of contigs
@@ -1630,6 +1682,11 @@ def main(
 
     order_all: dict[str, list[str]] = {}
     added_to_contig: dict[str, list[str]] = {}
+    for query in checked_assembly:
+        contig_in_query = contig2assembly[query] & query_set
+        for contig in contig_in_query:
+            if (contig2assembly[contig] & query_set) == contig_in_query:
+                pass
     for contig in contig2assembly:
         # only those contigs left in contig2assembly after filtering
         # (see above "# remove the queries in multiple paths") will be
