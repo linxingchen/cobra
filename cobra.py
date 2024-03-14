@@ -544,78 +544,46 @@ def get_contig2assembly(contig2join: dict[str, list[str]], path_circular_end: se
 def join_seqs(
     contig: str,
     contig2join: dict[str, list[str]],
-    path_circular: set[str],
     path_circular_end: set[str],
 ):
     """
     get the join order of the sequences in a give path
     """
-    order_all_: list[str] = []
-    added_to_: list[str] = []
-    left = contig + "_L"
-    right = contig + "_R"
+    left, right = contig + "_L", contig + "_R"
 
-    if contig not in path_circular:
-        if left in contig2join.keys() and right in contig2join.keys():
-            for item in contig2join[left][::-1]:
-                # the order of contigs added into the left direction should be reversed
-                order_all_.append(item)
-                added_to_.append(contig_name(item))
-
-            # the query contig itself should be added to the path as well
-            order_all_.append(contig)
-            for item in contig2join[right]:
-                if contig_name(item) not in added_to_:
-                    order_all_.append(item)
-        elif left in contig2join.keys() and right not in contig2join.keys():
-            for item in contig2join[left][::-1]:
-                # the order of contigs added into the left direction should be reversed
-                order_all_.append(item)
-            # the query contig itself should be added to the path as well
-            order_all_.append(contig)
+    order_all_ = [*reversed(contig2join[left]), contig]
+    if left not in path_circular_end:
+        # then we can add right to it
+        if contig2join[left] and contig2join[right]:
+            # only when we add those in both contig2join[left] and contig2join[right]
+            # and drop duplicates
+            added_to_ = {contig_name(item) for item in order_all_}
+            order_all_ += [
+                item
+                for item in contig2join[right]
+                if contig_name(item) not in added_to_
+            ]
         else:
-            # the query contig itself should be added to the path as well
-            order_all_.append(contig)
-            for item in contig2join[right]:
-                order_all_.append(item)
-    else:
-        if left in path_circular_end and right in path_circular_end:
-            for item in contig2join[left][::-1]:
-                # the order of contigs added into the left direction should be reversed
-                order_all_.append(item)
-            # the query contig itself should be added to the path as well
-            order_all_.append(contig)
-        elif left in path_circular_end and right not in path_circular_end:
-            for item in contig2join[left][::-1]:
-                # the order of contigs added into the left direction should be reversed
-                order_all_.append(item)
-            # the query contig itself should be added to the path as well
-            order_all_.append(contig)
-        elif right in path_circular_end and left not in path_circular_end:
-            # the query contig itself should be added to the path as well
-            order_all_.append(contig)
-            for item in contig2join[right]:
-                order_all_.append(item)
-    return order_all_, added_to_
+            # either contig2join[left] or contig2join[right] is blank, just add one side is necessary
+            order_all_ += contig2join[right]
+    # elif left in path_circular:
+    #   not extend right to order_all_ and just return
+    return order_all_
 
 
 def retrieve(contig: str, order_all: dict[str, list[str]], header2seq: dict[str, Seq]):
     """
     to retrieve and save all the contigs in the joining path of a query
     """
-    if contig in order_all.keys() and len(order_all[contig]) > 0:
-        out = open("COBRA_retrieved_for_joining/{0}_retrieved.fa".format(contig), "w")
-        added = []
+    with open(
+        "COBRA_retrieved_for_joining/{0}_retrieved.fa".format(contig), "w"
+    ) as out:
+        added: set[str] = set()
         for item in order_all[contig]:
             if contig_name(item) not in added:
                 out.write(">" + contig_name(item) + "\n")
                 out.write(header2seq[contig_name(item)] + "\n")
-                added.append(contig_name(item))
-            else:
-                pass
-        out.close()
-    else:
-        pass
+                added.add(contig_name(item))
 
 
 def count_seq(fasta_file: str):
@@ -1592,11 +1560,6 @@ def main(
             check_assembly_reason.items(), key=lambda x: (x[1][0], x[0])
         ):
             print(item[1][0], item[1][1], item[0], item[1][2], sep="\t", file=results)
-    checked_assembly = {
-        i: v
-        for i, v in check_assembly_reason.items()
-        if v[1] in {"standalone", "longest"}
-    }
     failed_join_conflict = {
         j: v[0]
         for v in check_assembly_reason.values()
@@ -1629,8 +1592,8 @@ def main(
     )
     checked_assembly_strict = {
         j: v[0]
-        for k, v in checked_assembly.items()
-        if v[0] not in failed_groups
+        for k, v in check_assembly_reason.items()
+        if v[1] in {"standalone", "longest"} and v[0] not in failed_groups
         for j in contig2assembly[k] & contig2assembly.keys()
     }
     failed_join_list = (
@@ -1638,6 +1601,12 @@ def main(
         | failed_join_conflict.keys()
         | failed_join_circular_6.keys()
     )
+    {
+        i: check_assembly_reason[i]
+        for i in checked_assembly_strict.keys()
+        if i in check_assembly_reason
+        and check_assembly_reason[i][1] == "circular_8_tight"
+    }
 
     def check_check_assembly_reason():
         assert not non_orphan_end_query - (
@@ -1686,11 +1655,11 @@ def main(
                         ),
                         ("self_circular", self_circular),
                         ("non_orphan_end_query", non_orphan_end_query),
-                        ("path_circular", path_circular),
                         ("failed_join_potential", failed_join_potential),
                         ("failed_join_nolink", failed_join_nolink.keys()),
                         ("failed_join_conflict", failed_join_conflict.keys()),
                         ("failed_join_circular_6", failed_join_circular_6.keys()),
+                        ("path_circular", path_circular),
                         ("checked_all_assembly_strict", checked_assembly_strict.keys()),
                     ]
                 ]
@@ -1728,77 +1697,46 @@ def main(
         check_query("k141_10804945")
 
     #
-    def all_contigs_in_the_path_are_good(contig_set: set[str]):
-        return not any(contig in failed_join_list for contig in contig_set)
-
-    ##
+    # TODO: Later, only keep the longest aval contigs
     # get the joining order of contigs
     log_info("[14/23]", "Getting the joining order of contigs.", log)
 
-    order_all: dict[str, list[str]] = {}
-    added_to_contig: dict[str, list[str]] = {}
-    for query in checked_assembly:
-        contig_in_query = contig2assembly[query] & query_set
-        for contig in contig_in_query:
-            if (contig2assembly[contig] & query_set) == contig_in_query:
-                pass
-    for contig in contig2assembly:
-        # only those contigs left in checked_assembly_strict after filtering
-        # checked for join paths (join_seqs) to get order_all
-        if (
-            len(contig2assembly[contig]) > 1
-            and contig not in failed_join_list
-            and contig not in redundant
-        ):
-            if all_contigs_in_the_path_are_good(contig2assembly[contig]):
-                order_all[contig], added_to_contig[contig] = join_seqs(
-                    contig,
-                    contig2join=contig2join,
-                    path_circular=path_circular,
-                    path_circular_end=path_circular_end,
-                )
-            else:
-                for item in contig2assembly[contig]:
-                    if item in extended_circular_query:
-                        extended_circular_query.remove(item)
-                        failed_join_list.append(item)
-                    elif item in extended_partial_query:
-                        extended_partial_query.remove(item)
-                        failed_join_list.append(item)
-
+    order_all = {
+        query: join_seqs(
+            query,
+            contig2join=contig2join,
+            path_circular_end=path_circular_end,
+        )
+        for query in contig2assembly
+    }
     ##
     # get retrieved sequences
     log_info("[15/23]", "Getting retrieved contigs.", log)
-    os.chdir("{0}".format(working_dir))
-    os.mkdir("COBRA_retrieved_for_joining")
-    retrieved = []
-    for contig in order_all.keys():
-        retrieve(contig, order_all=order_all, header2seq=header2seq)
-        retrieved.append(contig)
+    os.mkdir(f"{working_dir}/COBRA_retrieved_for_joining")
 
     # for debug
-    print("retrieved", file=debug, flush=True)
-    print(retrieved, file=debug, flush=True)
+    print("# retrieved order_all", file=debug, flush=True)
+    for contig in sorted(order_all):
+        with open(
+            f"{working_dir}/COBRA_retrieved_for_joining/{contig}_retrieved.fa", "w"
+        ) as out:
+            for item in {contig_name(i) for i in order_all[contig]}:
+                print(f">{item}\n{header2seq[item]}", file=out)
+        print(order_all[contig], file=debug, flush=True)
 
     ##
     # writing joined sequences
     log_info("[16/23]", "Saving joined seqeuences.", log)
     header2joined_seq = {}
     contig2extended_status = {}
-    for contig in retrieved:
-        a = open(
-            "COBRA_retrieved_for_joining/{0}_retrieved_joined.fa".format(contig), "w"
-        )
+    for contig in order_all:
+        a = open(f"{working_dir}/COBRA_retrieved_for_joining/{contig}_retrieved_joined.fa", "w")
         last = ""
         # print header regarding the joining status
-        if contig in path_circular:
-            a.write(">" + contig + "_extended_circular" + "\n")
-            header2joined_seq[contig + "_extended_circular"] = ""
-            contig2extended_status[contig] = contig + "_extended_circular"
-        else:
-            a.write(">" + contig + "_extended_partial" + "\n")
-            header2joined_seq[contig + "_extended_partial"] = ""
-            contig2extended_status[contig] = contig + "_extended_partial"
+        label = "_extended_circular" if contig in path_circular else "_extended_partial"
+        a.write(">" + contig + label + "\n")
+        header2joined_seq[contig + label] = ""
+        contig2extended_status[contig] = contig + label
 
         # print the sequences with their overlap removed
         for item in order_all[contig][:-1]:
@@ -1816,8 +1754,6 @@ def main(
                         header2joined_seq[contig2extended_status[contig]] += header2seq[
                             item.rsplit("_", 1)[0]
                         ][:-maxk_length]
-                    else:
-                        pass
             elif item.endswith("rc"):
                 if last == "":
                     a.write(
@@ -1833,28 +1769,23 @@ def main(
                     ] += reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
                         :-maxk_length
                     ]
-                else:
-                    if (
+                elif (
+                    reverse_complement(header2seq[item.rsplit("_", 1)[0]])[:maxk_length]
+                    == last
+                ):
+                    a.write(
                         reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                            :maxk_length
-                        ]
-                        == last
-                    ):
-                        a.write(
-                            reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                                :-maxk_length
-                            ]
-                        )
-                        last = reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                            -maxk_length:
-                        ]
-                        header2joined_seq[
-                            contig2extended_status[contig]
-                        ] += reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
                             :-maxk_length
                         ]
-                    else:
-                        pass
+                    )
+                    last = reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
+                        -maxk_length:
+                    ]
+                    header2joined_seq[
+                        contig2extended_status[contig]
+                    ] += reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
+                        :-maxk_length
+                    ]
             else:
                 if last == "":
                     a.write(header2seq[contig][:-maxk_length])
@@ -1862,16 +1793,12 @@ def main(
                     header2joined_seq[contig2extended_status[contig]] += header2seq[
                         contig
                     ][:-maxk_length]
-                else:
-                    if header2seq[contig][:maxk_length] == last:
-                        a.write(header2seq[contig][:-maxk_length])
-                        last = header2seq[contig][-maxk_length:]
-                        header2joined_seq[contig2extended_status[contig]] += header2seq[
-                            contig
-                        ][:-maxk_length]
-                    else:
-                        pass
-
+                elif header2seq[contig][:maxk_length] == last:
+                    a.write(header2seq[contig][:-maxk_length])
+                    last = header2seq[contig][-maxk_length:]
+                    header2joined_seq[contig2extended_status[contig]] += header2seq[
+                        contig
+                    ][:-maxk_length]
         if order_all[contig][-1].endswith("rc"):
             a.write(
                 reverse_complement(header2seq[order_all[contig][-1].rsplit("_", 1)[0]])
@@ -1892,9 +1819,9 @@ def main(
             header2joined_seq[contig2extended_status[contig]] += header2seq[
                 order_all[contig][-1]
             ]
-
         a.close()
 
+    os.chdir(f"{working_dir}")
     print("contig2extended_status", file=debug, flush=True)
     print(contig2extended_status, file=debug, flush=True)
     print("header2joined_seq", file=debug, flush=True)
@@ -1911,7 +1838,7 @@ def main(
     blastdb_2 = open("blastdb_2.fa", "w")
     cobraSeq2len = {}
 
-    for contig in retrieved:
+    for contig in order_all:
         a = open(
             "COBRA_retrieved_for_joining/{0}_retrieved_joined.fa".format(contig), "r"
         )
