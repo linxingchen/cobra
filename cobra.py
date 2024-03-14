@@ -1369,6 +1369,7 @@ def main(
                 "circular_in_sub",
                 "circular_6_conflict",
                 "circular_8_tight",
+                "nolink_query",
                 "longest",
             ],
             list[str],
@@ -1524,50 +1525,66 @@ def main(
                     if subset_circular:
                         while (
                             subset_circular
+                            and frags
                             # confirm potential `6` to speed up
                             and subset_circular[-1] != frags[-1]
-                            and (
+                        ):
+                            if (
                                 contig2assembly[frags[-1]]
                                 - contig2assembly[subset_circular[-1]]
-                                < query_set
-                            )
-                        ):
-                            # if contig < contig_1
-                            # and contig_1 is not circular
-                            # and contig_1 at the arm of `6`
-                            #  >contig
-                            # .|----->.
-                            # ^       T
-                            # |       |
-                            # _       v
-                            # .<-----|+|----->
-                            #          >contig_1 (conflict and both failed)
-                            #
-                            frag = subset_circular.pop(-1)
-                            check_assembly_reason[frag] = (
-                                groupi,
-                                "circular_6_conflict",
-                                frags[frags.index(frag) :],
-                            )
-                            # the related circular query "contig" fail as well
-                            frags = frags[: frags.index(frag)]
-                        if subset_circular and subset_circular[0] != frags[-1]:
-                            # check if any extension on the smallest `0`
-                            # if so, any `6` will be considered as part of the biggest `8`
-                            # and `8` is tightened as the smallest `0`
-                            frag = frags[-1]
-                            check_assembly_reason[frag] = (
-                                groupi,
-                                "circular_8_tight",
-                                frags[frags.index(frag) :],
-                            )
-                            frags = frags[: frags.index(subset_circular[0]) + 1]
+                            ) & contig2assembly.keys():
+                                # if contig < contig_1
+                                # and contig_1 is not circular
+                                # and contig_1 at the arm of `6`
+                                #  >contig
+                                # .|----->.
+                                # ^       T
+                                # |       |
+                                # _       v
+                                # .<-----|+|----->
+                                #          >contig_1 (conflict and both failed)
+                                #
+                                # if so, remove the biggest `6`
+                                frag = subset_circular[-1]
+                                check_assembly_reason[frag] = (
+                                    groupi,
+                                    "circular_6_conflict",
+                                    frags[frags.index(frag) :],
+                                )
+                                # (next check for extensions on smaller circle)
+                                frags = frags[: frags.index(frag)]
+                            else:  # if subset_circular and subset_circular[0] != frags[-1]:
+                                # check if any extension on the smallest `0`
+                                # if so, any `6` will be considered as part of the biggest `8`
+                                # and `8` is tightened as the smallest `0`
+                                frag = frags[-1]
+                                check_assembly_reason[frag] = (
+                                    groupi,
+                                    "circular_8_tight",
+                                    frags[frags.index(frag) :],
+                                )
+                                frags = frags[: frags.index(subset_circular[0]) + 1]
+                                # assert subset_circular[0] != frags[-1], "expected break the while-loop"
                     if frags:
-                        check_assembly_reason[subset] = (
-                            groupi,
-                            "longest",
-                            frags,
-                        )
+                        # remove query contigs that cannot extend itself
+                        this = ""
+                        for frag in frags:
+                            if contig2assembly[frag] & failed_join_potential:
+                                this = frag
+                                break
+                        if this:
+                            check_assembly_reason[frags[-1]] = (
+                                groupi,
+                                "nolink_query",
+                                frags[frags.index(frag) :],
+                            )
+                            frags = frags[: frags.index(frag)]
+                        if frags:
+                            check_assembly_reason[frags[-1]] = (
+                                groupi,
+                                "longest",
+                                frags,
+                            )
 
     with open(f"{working_dir}/COBRA_check_assembly_reason.tsv", "w") as results:
         print("group", "reason", "query", "dups", sep="\t", file=results)
@@ -1580,101 +1597,139 @@ def main(
         for i, v in check_assembly_reason.items()
         if v[1] in {"standalone", "longest"}
     }
-    failed_group_conflict = {
-        v[0] for k, v in check_assembly_reason.items() if v[1] == "conflict_query"
-    }
-    failed_group_circular_6 = {
-        v[0] for k, v in check_assembly_reason.items() if v[1] == "circular_6_conflict"
-    }
     failed_join_conflict = {
-        j: g
-        for g in failed_group_conflict
-        for i in query2groups[g]
+        j: v[0]
+        for v in check_assembly_reason.values()
+        if v[1] == "conflict_query"
+        for i in query2groups[v[0]]
         for j in contig2assembly[i]
         if j in query_set
     }
     failed_join_circular_6 = {
-        j: g
-        for g in failed_group_circular_6
-        for i in query2groups[g]
+        j: v[0]
+        for v in check_assembly_reason.values()
+        if v[1] == "circular_6_conflict"
+        for i in query2groups[v[0]]
         for j in contig2assembly[i]
         if j in query_set
     }
-    failed_groups = failed_group_conflict | failed_group_circular_6
+    failed_join_nolink = {
+        j: v[0]
+        for v in check_assembly_reason.values()
+        if v[1] == "nolink_query"
+        for i in query2groups[v[0]]
+        for j in contig2assembly[i]
+        if j in query_set
+    }
+    failed_groups = (
+        failed_join_potential
+        | set(failed_join_conflict.values())
+        | set(failed_join_circular_6.values())
+        | set(failed_join_nolink.values())
+    )
     checked_assembly_strict = {
         j: v[0]
         for k, v in checked_assembly.items()
         if v[0] not in failed_groups
-        for j in contig2assembly[k]
-        if j in contig2assembly
+        for j in contig2assembly[k] & contig2assembly.keys()
     }
-    non_orphan_end_query - (
-        failed_join_potential
-        | self_circular
-        | self_circular_non_expected_overlap.keys()
-        | failed_join_conflict.keys()
-        | failed_join_circular_6.keys()
-        | checked_assembly_strict.keys()
-    )
-
     failed_join_list = (
-        failed_join_potential
+        failed_join_nolink.keys()
         | failed_join_conflict.keys()
         | failed_join_circular_6.keys()
     )
 
-    def check_query(query: str):
-        print(
-            f"{query=}",
-            f"{query in query_set=}",
-            f"{contig2assembly.get(query)=}",
-            f"{check_assembly_reason.get(query)=}",
-            f"{query in path_circular=}",
-            f"{query in failed_join_potential=}",
-            f"{query in failed_join_conflict=}",
-            f"{query in failed_join_circular_6=}",
-            f"{query in failed_groups=}",
-            f"{query in checked_assembly_strict=}",
-            sep="\n",
+    def check_check_assembly_reason():
+        assert not non_orphan_end_query - (
+            self_circular
+            | failed_join_potential
+            | failed_join_nolink.keys()
+            | failed_join_conflict.keys()
+            | failed_join_circular_6.keys()
+            | checked_assembly_strict.keys()
         )
-        print(query2groups.get(check_assembly_reason.get(query, [-1])[0]))
-        print({i: contig2assembly.get(i) for i in contig2assembly.get(query)})
-        print({i: check_assembly_reason.get(i) for i in contig2assembly.get(query)})
-        print(
+        assert not checked_assembly_strict.keys() & failed_join_potential
+        assert not checked_assembly_strict.keys() & failed_join_nolink.keys()
+        assert not checked_assembly_strict.keys() & failed_join_conflict.keys()
+        assert not checked_assembly_strict.keys() & failed_join_circular_6.keys()
+        assert not self_circular & self_circular_non_expected_overlap.keys()
+        assert not any(
             {
-                k: v
-                for k, v in query2groups.items()
-                if v.keys() & contig2assembly.get(query, {})
+                query
+                for query in checked_assembly_strict
+                for contig in contig2assembly[query]
+                if contig in failed_join_list
             }
         )
-
-    check_query("k141_23763925")
-    {k: v for k, v in check_assembly_reason.items() if v[0] == 26768}
-    print(
-        f"{len(query_set)=}",
-        f"{len(contig2assembly)=}",
-        f"{len(failed_join_potential)=}",
-        f"{len(failed_join_conflict)=}",
-        f"{len(failed_join_circular_6)=}",
-        f"{len(failed_groups)=}",
-        f"{len(checked_assembly_strict)=}",
-    )
-    sum(
-        len(i)
-        for i in (
-            failed_join_conflict,
-            failed_join_circular_6,
-            failed_groups,
-            checked_assembly_strict,
+        print(
+            *(
+                "\t".join(
+                    [
+                        *(
+                            (
+                                ""
+                                if pi < pj
+                                else (f"{len(li)}" if i == j else f"{len(li & lj)}")
+                            )
+                            for pj, (j, lj) in enumerate(ll)
+                        ),
+                        f"{i}",
+                    ]
+                )
+                for ll in [
+                    [
+                        ("query_set", query_set),
+                        ("orphan_end_query", orphan_end_query),
+                        (
+                            "self_circular_non_expected_overlap",
+                            self_circular_non_expected_overlap.keys(),
+                        ),
+                        ("self_circular", self_circular),
+                        ("non_orphan_end_query", non_orphan_end_query),
+                        ("path_circular", path_circular),
+                        ("failed_join_potential", failed_join_potential),
+                        ("failed_join_nolink", failed_join_nolink.keys()),
+                        ("failed_join_conflict", failed_join_conflict.keys()),
+                        ("failed_join_circular_6", failed_join_circular_6.keys()),
+                        ("checked_all_assembly_strict", checked_assembly_strict.keys()),
+                    ]
+                ]
+                for pi, (i, li) in enumerate(ll)
+            ),
+            sep="\n",
         )
-    )
+
+        def check_query(query: str):
+            print(
+                f"{query=}",
+                f"{query in query_set=}",
+                f"{contig2assembly.get(query)=}",
+                f"{check_assembly_reason.get(query)=}",
+                f"{query in path_circular=}",
+                f"{query in failed_join_potential=}",
+                f"{query in failed_join_nolink=}",
+                f"{query in failed_join_conflict=}",
+                f"{query in failed_join_circular_6=}",
+                f"{query in failed_groups=}",
+                f"{query in checked_assembly_strict=}",
+                sep="\n",
+            )
+            print(query2groups.get(check_assembly_reason.get(query, [-1])[0]))
+            print({i: contig2assembly.get(i) for i in contig2assembly.get(query)})
+            print({i: check_assembly_reason.get(i) for i in contig2assembly.get(query)})
+            print(
+                {
+                    k: v
+                    for k, v in query2groups.items()
+                    if v.keys() & contig2assembly.get(query, {})
+                }
+            )
+
+        check_query("k141_10804945")
 
     #
     def all_contigs_in_the_path_are_good(contig_set: set[str]):
-        for contig in contig_set:
-            if contig in failed_join_list:
-                return False
-        return True
+        return not any(contig in failed_join_list for contig in contig_set)
 
     ##
     # get the joining order of contigs
@@ -1688,8 +1743,7 @@ def main(
             if (contig2assembly[contig] & query_set) == contig_in_query:
                 pass
     for contig in contig2assembly:
-        # only those contigs left in contig2assembly after filtering
-        # (see above "# remove the queries in multiple paths") will be
+        # only those contigs left in checked_assembly_strict after filtering
         # checked for join paths (join_seqs) to get order_all
         if (
             len(contig2assembly[contig]) > 1
