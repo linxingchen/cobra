@@ -1730,96 +1730,104 @@ def main(
     header2joined_seq = {}
     contig2extended_status = {}
     for contig in order_all:
-        a = open(f"{working_dir}/COBRA_retrieved_for_joining/{contig}_retrieved_joined.fa", "w")
-        last = ""
-        # print header regarding the joining status
-        label = "_extended_circular" if contig in path_circular else "_extended_partial"
-        a.write(">" + contig + label + "\n")
-        header2joined_seq[contig + label] = ""
-        contig2extended_status[contig] = contig + label
+        with open(
+            f"{working_dir}/COBRA_retrieved_for_joining/{contig}_retrieved_joined.fa",
+            "w",
+        ) as a:
+            last = ""
+            # print header regarding the joining status
+            label = (
+                "_extended_circular" if contig in path_circular else "_extended_partial"
+            )
+            a.write(">" + contig + label + "\n")
+            header2joined_seq[contig + label] = ""
+            contig2extended_status[contig] = contig + label
 
-        # print the sequences with their overlap removed
-        for item in order_all[contig][:-1]:
-            if item.endswith("_R") or item.endswith("_L"):
-                if last == "":
-                    a.write(header2seq[item.rsplit("_", 1)[0]][:-maxk_length])
-                    last = header2seq[item.rsplit("_", 1)[0]][-maxk_length:]
-                    header2joined_seq[contig2extended_status[contig]] += header2seq[
-                        item.rsplit("_", 1)[0]
-                    ][:-maxk_length]
-                else:
-                    if header2seq[item.rsplit("_", 1)[0]][:maxk_length] == last:
+            # print the sequences with their overlap removed
+            for item in order_all[contig][:-1]:
+                if item.endswith("_R") or item.endswith("_L"):
+                    if last == "":
                         a.write(header2seq[item.rsplit("_", 1)[0]][:-maxk_length])
                         last = header2seq[item.rsplit("_", 1)[0]][-maxk_length:]
                         header2joined_seq[contig2extended_status[contig]] += header2seq[
                             item.rsplit("_", 1)[0]
                         ][:-maxk_length]
-            elif item.endswith("rc"):
-                if last == "":
-                    a.write(
-                        reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
+                    else:
+                        if header2seq[item.rsplit("_", 1)[0]][:maxk_length] == last:
+                            a.write(header2seq[item.rsplit("_", 1)[0]][:-maxk_length])
+                            last = header2seq[item.rsplit("_", 1)[0]][-maxk_length:]
+                            header2joined_seq[
+                                contig2extended_status[contig]
+                            ] += header2seq[item.rsplit("_", 1)[0]][:-maxk_length]
+                elif item.endswith("rc"):
+                    if last == "":
+                        a.write(
+                            reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
+                                :-maxk_length
+                            ]
+                        )
+                        last = reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
+                            -maxk_length:
+                        ]
+                        header2joined_seq[
+                            contig2extended_status[contig]
+                        ] += reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
                             :-maxk_length
                         ]
-                    )
-                    last = reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                        -maxk_length:
-                    ]
-                    header2joined_seq[
-                        contig2extended_status[contig]
-                    ] += reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                        :-maxk_length
-                    ]
-                elif (
-                    reverse_complement(header2seq[item.rsplit("_", 1)[0]])[:maxk_length]
-                    == last
-                ):
-                    a.write(
+                    elif (
                         reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
+                            :maxk_length
+                        ]
+                        == last
+                    ):
+                        a.write(
+                            reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
+                                :-maxk_length
+                            ]
+                        )
+                        last = reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
+                            -maxk_length:
+                        ]
+                        header2joined_seq[
+                            contig2extended_status[contig]
+                        ] += reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
                             :-maxk_length
                         ]
+                else:
+                    if last == "":
+                        a.write(header2seq[contig][:-maxk_length])
+                        last = header2seq[contig][-maxk_length:]
+                        header2joined_seq[contig2extended_status[contig]] += header2seq[
+                            contig
+                        ][:-maxk_length]
+                    elif header2seq[contig][:maxk_length] == last:
+                        a.write(header2seq[contig][:-maxk_length])
+                        last = header2seq[contig][-maxk_length:]
+                        header2joined_seq[contig2extended_status[contig]] += header2seq[
+                            contig
+                        ][:-maxk_length]
+            if order_all[contig][-1].endswith("rc"):
+                a.write(
+                    reverse_complement(
+                        header2seq[order_all[contig][-1].rsplit("_", 1)[0]]
                     )
-                    last = reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                        -maxk_length:
-                    ]
-                    header2joined_seq[
-                        contig2extended_status[contig]
-                    ] += reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                        :-maxk_length
-                    ]
+                    + "\n"
+                )
+                header2joined_seq[contig2extended_status[contig]] += reverse_complement(
+                    header2seq[order_all[contig][-1].rsplit("_", 1)[0]]
+                )
+            elif order_all[contig][-1].endswith("_R") or order_all[contig][-1].endswith(
+                "_L"
+            ):
+                a.write(header2seq[order_all[contig][-1].rsplit("_", 1)[0]] + "\n")
+                header2joined_seq[contig2extended_status[contig]] += header2seq[
+                    order_all[contig][-1].rsplit("_", 1)[0]
+                ]
             else:
-                if last == "":
-                    a.write(header2seq[contig][:-maxk_length])
-                    last = header2seq[contig][-maxk_length:]
-                    header2joined_seq[contig2extended_status[contig]] += header2seq[
-                        contig
-                    ][:-maxk_length]
-                elif header2seq[contig][:maxk_length] == last:
-                    a.write(header2seq[contig][:-maxk_length])
-                    last = header2seq[contig][-maxk_length:]
-                    header2joined_seq[contig2extended_status[contig]] += header2seq[
-                        contig
-                    ][:-maxk_length]
-        if order_all[contig][-1].endswith("rc"):
-            a.write(
-                reverse_complement(header2seq[order_all[contig][-1].rsplit("_", 1)[0]])
-                + "\n"
-            )
-            header2joined_seq[contig2extended_status[contig]] += reverse_complement(
-                header2seq[order_all[contig][-1].rsplit("_", 1)[0]]
-            )
-        elif order_all[contig][-1].endswith("_R") or order_all[contig][-1].endswith(
-            "_L"
-        ):
-            a.write(header2seq[order_all[contig][-1].rsplit("_", 1)[0]] + "\n")
-            header2joined_seq[contig2extended_status[contig]] += header2seq[
-                order_all[contig][-1].rsplit("_", 1)[0]
-            ]
-        else:
-            a.write(header2seq[order_all[contig][-1]] + "\n")
-            header2joined_seq[contig2extended_status[contig]] += header2seq[
-                order_all[contig][-1]
-            ]
-        a.close()
+                a.write(header2seq[order_all[contig][-1]] + "\n")
+                header2joined_seq[contig2extended_status[contig]] += header2seq[
+                    order_all[contig][-1]
+                ]
 
     os.chdir(f"{working_dir}")
     print("contig2extended_status", file=debug, flush=True)
