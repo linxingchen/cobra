@@ -7,6 +7,7 @@
 
 
 import argparse
+import concurrent.futures
 import itertools
 import os
 from collections import defaultdict
@@ -16,7 +17,7 @@ from typing import Callable, Iterable, Literal, TextIO, TypeVar
 import pandas as pd
 import pysam
 from Bio import SeqIO
-from Bio.Seq import Seq, reverse_complement
+from Bio.Seq import Seq
 
 T = TypeVar("T")
 try:
@@ -148,8 +149,9 @@ def contig_name(end_name: str):
     """
     get contig name from end name
     """
-    if end_name.rsplit("_", 1)[-1] in ("L", "R", "Lrc", "Rrc"):
-        return end_name.rsplit("_", 1)[0]
+    end_name_split = end_name.rsplit("_", 1)
+    if end_name_split[-1] in ("L", "R", "Lrc", "Rrc"):
+        return end_name_split[0]
     else:
         return end_name
 
@@ -1081,6 +1083,55 @@ def get_query2groups(contig2assembly: dict[str, set[str]], query_set: set[str]):
         yield {query: ucontig2assembly[query] for query in group}
 
 
+def write_and_run_blast(
+    data_chunk: Iterable[tuple[str, Seq, int]], working_dir: str, retries=3
+):
+    cobra_seq2lenblast: dict[str, tuple[int, list[list[str]]]] = {}
+    os.makedirs(working_dir)
+    outlog = f"{working_dir}/log"
+    outfile = f"{working_dir}/blastdb_2.vs.1.tsv"
+    for i in range(1, retries + 1):
+        try:
+            with (
+                open(f"{working_dir}/blastdb_1.fa", "w") as blastdb_1,
+                open(f"{working_dir}/blastdb_2.fa", "w") as blastdb_2,
+            ):
+                for header, seq, seq_len in data_chunk:
+                    cobra_seq2lenblast[header] = seq_len, []
+                    half = (len(seq) + 1) // 2
+                    print(f">{header}_1\n{seq[:half]}", file=blastdb_1)
+                    print(f">{header}_2\n{seq[half:]}", file=blastdb_2)
+            os.system(f"makeblastdb -in {blastdb_1.name} -dbtype nucl > {outlog}")
+            os.system(
+                "blastn"
+                f" -task blastn"
+                f" -db {blastdb_1.name}"
+                f" -query {blastdb_2.name}"
+                f" -out {outfile}"
+                f" -outfmt 6 -evalue 1e-10 -perc_identity 70"
+                f" -num_threads 1 "
+                f">> {outlog}"
+            )
+            with open(outfile) as r:
+                for line in r:
+                    line_v = line.strip().split("\t")
+                    contig_join = line_v[0].rsplit("_", 1)[0]
+                    if (
+                        contig_join == line_v[1].rsplit("_", 1)[0]
+                        and line_v[0] != line_v[1]
+                        and float(line_v[3]) >= 1000
+                    ):
+                        cobra_seq2lenblast[contig_join][1].append(line_v)
+            return cobra_seq2lenblast
+        except Exception:
+            os.system(f"echo '' >> {outlog}")
+            os.system(f"echo 'run {i} failed' >> {outlog}")
+            os.system(f"echo '' >> {outlog}")
+            if i == retries:
+                raise
+    raise NotImplementedError
+
+
 def main(
     query_fa: str,
     assem_fa: str,
@@ -1727,114 +1778,54 @@ def main(
     ##
     # writing joined sequences
     log_info("[16/23]", "Saving joined seqeuences.", log)
-    header2joined_seq = {}
-    contig2extended_status = {}
-    for contig in order_all:
+    contig2extended_status: dict[str, str] = {}
+    header2joined_seq: dict[str, Seq] = {}
+    for query in tqdm(order_all):
+        contig_label = query + (
+            "_extended_circular" if query in path_circular else "_extended_partial"
+        )
+        contig2extended_status[query] = contig_label
+        last = Seq("")
+        header2joined_seq[contig_label] = Seq("")
+        # print the sequences with their overlap removed
+        for item in order_all[query]:
+            contig = contig_name(item)
+            if item.endswith("rc"):
+                seq = header2seq[contig].reverse_complement()
+            else:
+                # not a terminal, just the query itself
+                if not (item.endswith("_R") or item.endswith("_L")):
+                    assert query == contig
+                seq = header2seq[contig]
+            if last == "" or seq[:maxk_length] == last:
+                header2joined_seq[contig_label] += seq[:-maxk_length]
+                last = seq[-maxk_length:]
+        header2joined_seq[contig_label] += last
         with open(
-            f"{working_dir}/COBRA_retrieved_for_joining/{contig}_retrieved_joined.fa",
+            f"{working_dir}/COBRA_retrieved_for_joining/{query}_retrieved_joined.fa",
             "w",
         ) as a:
-            last = ""
             # print header regarding the joining status
-            label = (
-                "_extended_circular" if contig in path_circular else "_extended_partial"
-            )
-            a.write(">" + contig + label + "\n")
-            header2joined_seq[contig + label] = ""
-            contig2extended_status[contig] = contig + label
+            print(f">{contig_label}\n{header2joined_seq[contig_label]}", file=a)
 
-            # print the sequences with their overlap removed
-            for item in order_all[contig][:-1]:
-                if item.endswith("_R") or item.endswith("_L"):
-                    if last == "":
-                        a.write(header2seq[item.rsplit("_", 1)[0]][:-maxk_length])
-                        last = header2seq[item.rsplit("_", 1)[0]][-maxk_length:]
-                        header2joined_seq[contig2extended_status[contig]] += header2seq[
-                            item.rsplit("_", 1)[0]
-                        ][:-maxk_length]
-                    else:
-                        if header2seq[item.rsplit("_", 1)[0]][:maxk_length] == last:
-                            a.write(header2seq[item.rsplit("_", 1)[0]][:-maxk_length])
-                            last = header2seq[item.rsplit("_", 1)[0]][-maxk_length:]
-                            header2joined_seq[
-                                contig2extended_status[contig]
-                            ] += header2seq[item.rsplit("_", 1)[0]][:-maxk_length]
-                elif item.endswith("rc"):
-                    if last == "":
-                        a.write(
-                            reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                                :-maxk_length
-                            ]
-                        )
-                        last = reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                            -maxk_length:
-                        ]
-                        header2joined_seq[
-                            contig2extended_status[contig]
-                        ] += reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                            :-maxk_length
-                        ]
-                    elif (
-                        reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                            :maxk_length
-                        ]
-                        == last
-                    ):
-                        a.write(
-                            reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                                :-maxk_length
-                            ]
-                        )
-                        last = reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                            -maxk_length:
-                        ]
-                        header2joined_seq[
-                            contig2extended_status[contig]
-                        ] += reverse_complement(header2seq[item.rsplit("_", 1)[0]])[
-                            :-maxk_length
-                        ]
-                else:
-                    if last == "":
-                        a.write(header2seq[contig][:-maxk_length])
-                        last = header2seq[contig][-maxk_length:]
-                        header2joined_seq[contig2extended_status[contig]] += header2seq[
-                            contig
-                        ][:-maxk_length]
-                    elif header2seq[contig][:maxk_length] == last:
-                        a.write(header2seq[contig][:-maxk_length])
-                        last = header2seq[contig][-maxk_length:]
-                        header2joined_seq[contig2extended_status[contig]] += header2seq[
-                            contig
-                        ][:-maxk_length]
-            if order_all[contig][-1].endswith("rc"):
-                a.write(
-                    reverse_complement(
-                        header2seq[order_all[contig][-1].rsplit("_", 1)[0]]
-                    )
-                    + "\n"
-                )
-                header2joined_seq[contig2extended_status[contig]] += reverse_complement(
-                    header2seq[order_all[contig][-1].rsplit("_", 1)[0]]
-                )
-            elif order_all[contig][-1].endswith("_R") or order_all[contig][-1].endswith(
-                "_L"
-            ):
-                a.write(header2seq[order_all[contig][-1].rsplit("_", 1)[0]] + "\n")
-                header2joined_seq[contig2extended_status[contig]] += header2seq[
-                    order_all[contig][-1].rsplit("_", 1)[0]
-                ]
-            else:
-                a.write(header2seq[order_all[contig][-1]] + "\n")
-                header2joined_seq[contig2extended_status[contig]] += header2seq[
-                    order_all[contig][-1]
-                ]
-
-    os.chdir(f"{working_dir}")
     print("contig2extended_status", file=debug, flush=True)
     print(contig2extended_status, file=debug, flush=True)
     print("header2joined_seq", file=debug, flush=True)
-    print(header2joined_seq.keys(), file=debug, flush=True)
+    print(sorted(header2joined_seq), file=debug, flush=True)
 
+    # make blastn database and run search if the database is not empty
+    if (
+        (not header2joined_seq)
+        and (not self_circular)
+        and (not self_circular_non_expected_overlap)
+    ):
+        # Of course we assume that sequence is not empty!
+        print(
+            "no query was extended, exit! this is normal if you only provide few queries.",
+            file=log,
+            flush=True,
+        )
+        exit()
     ##
     # Similar direct terminal repeats may lead to invalid joins
     log_info(
@@ -1842,83 +1833,68 @@ def main(
         "Checking for invalid joining using BLASTn: close strains.",
         log,
     )
-    blastdb_1 = open("blastdb_1.fa", "w")
-    blastdb_2 = open("blastdb_2.fa", "w")
-    cobraSeq2len = {}
 
-    for contig in order_all:
-        a = open(
-            "COBRA_retrieved_for_joining/{0}_retrieved_joined.fa".format(contig), "r"
+    query2compare = (
+        i
+        for j in (
+            (
+                (
+                    contig2extended_status[contig],
+                    header2joined_seq[contig2extended_status[contig]],
+                    len(seq),
+                )
+                for contig in order_all
+            ),
+            (
+                (
+                    contig,
+                    header2seq[contig],
+                    header2len[contig] - maxk_length,
+                )
+                for contig in self_circular
+            ),
+            (
+                (
+                    contig,
+                    header2seq[contig],
+                    header2len[contig] - self_circular_non_expected_overlap[contig],
+                )
+                for contig in self_circular_non_expected_overlap
+            ),
         )
-        for record in SeqIO.parse(a, "fasta"):
-            header = str(record.id).strip()
-            seq = str(record.seq)
-            cobraSeq2len[header.split("_extended", 1)[0]] = len(seq)
+        for i in j
+    )
 
-            if len(seq) % 2 == 0:
-                half = int(len(seq) / 2)
-            else:
-                half = int((len(seq) + 1) / 2)
+    def group_yield(data: Iterable[T], n=100):
+        d = iter(data)
+        while l := [i for i, _ in zip(d, range(n))]:
+            yield l
 
-            blastdb_1.write(">" + header + "_1" + "\n")
-            blastdb_1.write(seq[:half] + "\n")
-            blastdb_2.write(">" + header + "_2" + "\n")
-            blastdb_2.write(seq[half:] + "\n")
+    with (
+        concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor,
+        open(f"{working_dir}/blast_pairs.tsv", "w") as results,
+    ):
+        os.makedirs(f"{working_dir}/blast_temp")
+        futures = {
+            executor.submit(
+                write_and_run_blast, data_chunk, f"{working_dir}/blast_temp/tmp_{i}"
+            )
+            for i, data_chunk in enumerate(group_yield(query2compare))
+        }
+        for future in tqdm(
+            concurrent.futures.as_completed(futures),
+            desc="Running blastn",
+            total=len(futures),
+        ):
+            for query, (seq_len, blastns) in future.result().items():
+                for blastn_v in blastns:
+                    print(query, seq_len, *blastn_v[2:], sep="\t", file=results)
 
-        a.close()
-
-    for contig in self_circular:
-        cobraSeq2len[contig] = header2len[contig] - maxk_length
-
-        if header2len[contig] % 2 == 0:
-            half = int(header2len[contig] / 2)
-        else:
-            half = int((header2len[contig] + 1) / 2)
-
-        blastdb_1.write(">" + contig + "_1" + "\n")
-        blastdb_1.write(header2seq[contig][:half] + "\n")
-        blastdb_2.write(">" + contig + "_2" + "\n")
-        blastdb_2.write(header2seq[contig][half:] + "\n")
-
-    for contig in self_circular_non_expected_overlap:
-        cobraSeq2len[contig] = (
-            header2len[contig] - self_circular_non_expected_overlap[contig]
-        )
-
-        if header2len[contig] % 2 == 0:
-            half = int(header2len[contig] / 2)
-        else:
-            half = int((header2len[contig] + 1) / 2)
-
-        blastdb_1.write(">" + contig + "_1" + "\n")
-        blastdb_1.write(header2seq[contig][:half] + "\n")
-        blastdb_2.write(">" + contig + "_2" + "\n")
-        blastdb_2.write(header2seq[contig][half:] + "\n")
-
-    blastdb_1.close()
-    blastdb_2.close()
-
-    # make blastn database and run search if the database is not empty
-    if os.path.getsize("blastdb_1.fa") == 0:
-        print(
-            "no query was extended, exit! this is normal if you only provide few queries.",
-            file=log,
-            flush=True,
-        )
-        exit()
-    else:
-        os.system("makeblastdb -in blastdb_1.fa -dbtype nucl")
-        os.system(
-            "blastn "
-            "-task blastn -db blastdb_1.fa -query blastdb_2.fa "
-            "-out blastdb_2.vs.blastdb_1 -evalue 1e-10 "
-            f"-outfmt 6 -perc_identity 70 -num_threads {threads}"
-        )
-
+    cobraSeq2len: dict[str, int] = {}
     # parse the blastn results
     contig2TotLen: dict[str, float] = {}
-    with open("blastdb_2.vs.blastdb_1") as r:
-        for line in r.readlines():
+    with open(f"{working_dir}/blastdb_2.vs.blastdb_1") as r:
+        for line in r:
             line_v = line.strip().split("\t")
             if (
                 line_v[0].rsplit("_", 1)[0] == line_v[1].rsplit("_", 1)[0]
@@ -1940,6 +1916,7 @@ def main(
                     else:
                         contig2TotLen[line_v[0].rsplit("_", 1)[0]] += float(line_v[3])
 
+    os.chdir(f"{working_dir}")
     # identify potential incorrect joins and remove them from corresponding category
     for contig in contig2TotLen.keys():
         if (
