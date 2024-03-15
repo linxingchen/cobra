@@ -125,16 +125,6 @@ def parse_args():
     return parser.parse_args()
 
 
-##
-# Initialize an empty set to store the parsed linkage information
-
-is_subset_of: dict[str, str] = {}
-extended_circular_query: set[str] = set()
-extended_partial_query: set[str] = set()
-all_joined_query: set[str] = set()
-
-
-##
 # define functions for analyses
 def log_info(step: str, description: str, log_file: TextIO, line_feed="\n"):
     print(
@@ -1090,6 +1080,121 @@ def extend_query(
     return extend_seq + last
 
 
+def write_and_run_blast(
+    data_chunk: Iterable[tuple[str, Seq, int]],
+    working_dir: str,
+    prec_identity=70,
+    retries=3,
+):
+    cobra_seq2lenblast: dict[str, tuple[int, list[list[str]]]] = {}
+    os.makedirs(working_dir)
+    outlog = f"{working_dir}/log"
+    outfile = f"{working_dir}/blastdb_2.vs.1.tsv"
+    for i in range(1, retries + 1):
+        try:
+            with (
+                open(f"{working_dir}/blastdb_1.fa", "w") as blastdb_1,
+                open(f"{working_dir}/blastdb_2.fa", "w") as blastdb_2,
+            ):
+                for header, seq, overlap in data_chunk:
+                    cobra_seq2lenblast[header] = len(seq) - overlap, []
+                    half = (len(seq) + 1) // 2
+                    print(f">{header}_1\n{seq[:half]}", file=blastdb_1)
+                    print(f">{header}_2\n{seq[half:- overlap]}", file=blastdb_2)
+            os.system(f"makeblastdb -in {blastdb_1.name} -dbtype nucl > {outlog}")
+            os.system(
+                "blastn"
+                f" -task blastn"
+                f" -db {blastdb_1.name}"
+                f" -query {blastdb_2.name}"
+                f" -out {outfile}"
+                f" -outfmt 6 -evalue 1e-10 -perc_identity {prec_identity}"
+                f" -num_threads 1 "
+                f">> {outlog}"
+            )
+            with open(outfile) as r:
+                for line in r:
+                    line_v = line.strip().split("\t")
+                    contig_join = line_v[0].rsplit("_", 1)[0]
+                    if (
+                        contig_join == line_v[1].rsplit("_", 1)[0]
+                        and line_v[0] != line_v[1]
+                        and float(line_v[3]) >= 1000
+                    ):
+                        cobra_seq2lenblast[contig_join][1].append(line_v)
+            return cobra_seq2lenblast
+        except Exception:
+            os.system(f"echo '' >> {outlog}")
+            os.system(f"echo 'run {i} failed' >> {outlog}")
+            os.system(f"echo '' >> {outlog}")
+            if i == retries:
+                raise
+    raise NotImplementedError
+
+
+def group_yield(data: Iterable[T], n=100):
+    d = iter(data)
+    while l := [i for i, _ in zip(d, range(n))]:
+        yield l
+
+
+def run_blast_half(
+    query2compare: Iterable[tuple[str, Seq, int]], outfile: str, threads: int, n=100
+):
+    """
+    Screening of contigs joined from closely related genomes using BLASTn comparison.
+    https://www.nature.com/articles/s41564-023-01598-2/figures/8
+
+    To prevent the joining of fragmented contigs from closely related (sub)populations,
+      a BLASTn comparison is conducted
+        between the first half and second half of each joined COBRA sequence.
+    If the two parts share a region with a minimum length of 1000 bp
+                                     and a minimum nucleotide similarity of 70%,
+      all the query contigs involved in the join are labeled as "extended_failed"
+        to indicate the failed extension.
+    """
+    with (
+        concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor,
+        open(outfile, "w") as results,
+    ):
+        os.makedirs(f"{outfile}_temp")
+        futures = {
+            executor.submit(write_and_run_blast, data_chunk, f"{outfile}_temp/tmp_{i}")
+            for i, data_chunk in enumerate(group_yield(query2compare, n))
+        }
+        for future in tqdm(
+            concurrent.futures.as_completed(futures),
+            desc="Running blastn",
+            total=len(futures),
+        ):
+            for query, (seq_len, blastns) in future.result().items():
+                for blastn_v in blastns:
+                    print(query, seq_len, *blastn_v[2:], sep="\t", file=results)
+    return outfile
+
+
+def get_failed_blast_half(outfile: str):
+    """
+    identify potential incorrect joins and remove them from corresponding category
+    """
+    contig_len_overlap: dict[str, float] = {}
+    with open(outfile) as r:
+        for line in r:
+            line_v = line.strip().split("\t")
+            if float(line_v[3]) >= 1000:
+                if "_extended" in line_v[0]:
+                    query = line_v[0].split("_extended")[0]
+                else:
+                    query = line_v[0]
+                contig_len_overlap[query] = contig_len_overlap.get(query, 0) + float(
+                    line_v[3]
+                )
+
+    return frozenset(
+        contig for contig in contig_len_overlap if contig_len_overlap[contig] >= 1000
+    )
+
+
 def get_query2groups(contig2assembly: dict[str, set[str]], query_set: set[str]):
     """
     group all query paths if they shared paths
@@ -1422,58 +1527,6 @@ def get_assembly2reason(
     return check_assembly_reason
 
 
-def write_and_run_blast(
-    data_chunk: Iterable[tuple[str, Seq, int]],
-    working_dir: str,
-    prec_identity=70,
-    retries=3,
-):
-    cobra_seq2lenblast: dict[str, tuple[int, list[list[str]]]] = {}
-    os.makedirs(working_dir)
-    outlog = f"{working_dir}/log"
-    outfile = f"{working_dir}/blastdb_2.vs.1.tsv"
-    for i in range(1, retries + 1):
-        try:
-            with (
-                open(f"{working_dir}/blastdb_1.fa", "w") as blastdb_1,
-                open(f"{working_dir}/blastdb_2.fa", "w") as blastdb_2,
-            ):
-                for header, seq, overlap in data_chunk:
-                    cobra_seq2lenblast[header] = len(seq) - overlap, []
-                    half = (len(seq) + 1) // 2
-                    print(f">{header}_1\n{seq[:half]}", file=blastdb_1)
-                    print(f">{header}_2\n{seq[half:- overlap]}", file=blastdb_2)
-            os.system(f"makeblastdb -in {blastdb_1.name} -dbtype nucl > {outlog}")
-            os.system(
-                "blastn"
-                f" -task blastn"
-                f" -db {blastdb_1.name}"
-                f" -query {blastdb_2.name}"
-                f" -out {outfile}"
-                f" -outfmt 6 -evalue 1e-10 -perc_identity {prec_identity}"
-                f" -num_threads 1 "
-                f">> {outlog}"
-            )
-            with open(outfile) as r:
-                for line in r:
-                    line_v = line.strip().split("\t")
-                    contig_join = line_v[0].rsplit("_", 1)[0]
-                    if (
-                        contig_join == line_v[1].rsplit("_", 1)[0]
-                        and line_v[0] != line_v[1]
-                        and float(line_v[3]) >= 1000
-                    ):
-                        cobra_seq2lenblast[contig_join][1].append(line_v)
-            return cobra_seq2lenblast
-        except Exception:
-            os.system(f"echo '' >> {outlog}")
-            os.system(f"echo 'run {i} failed' >> {outlog}")
-            os.system(f"echo '' >> {outlog}")
-            if i == retries:
-                raise
-    raise NotImplementedError
-
-
 def main(
     query_fa: str,
     assem_fa: str,
@@ -1614,7 +1667,7 @@ def main(
     ##
     log_info("[08/23]", "Detecting self_circular contigs. ", log)
 
-    self_circular = {
+    self_circular = frozenset(
         contig
         for contig in tqdm(
             non_orphan_end_query, desc="Detecting self_circular contigs."
@@ -1625,7 +1678,7 @@ def main(
             two_paths_end=two_paths_end,
             link_pair=link_pair,
         )
-    }
+    )
     debug = open(f"{working_dir}/debug.txt", "w")
 
     # for debug
@@ -1664,7 +1717,7 @@ def main(
         link_pair=link_pair,
         one_path_end=one_path_end,
         two_paths_end=two_paths_end,
-        self_circular=frozenset(self_circular),
+        self_circular=self_circular,
     )
     path_circular = frozenset(contig_name(i) for i in path_circular_end)
     print("# path_circular", file=debug, flush=True)
@@ -1703,10 +1756,11 @@ def main(
     # get the joining paths
     log_info("[11/23]", "Checking for invalid joining: sharing queries.", log)
     contig2assembly = get_contig2assembly(contig2join, path_circular_end)
-    query2stat = {
-        k: QueryCovVar.query(v, cov=cov, header2len=header2len)
-        for k, v in tqdm(contig2assembly.items(), "stat query length and coverage")
-    }
+    # for debug
+    print("# contig2assembly", file=debug, flush=True)
+    for k in sorted(contig2assembly):
+        print(k, sorted(contig2assembly[k]), file=debug, flush=True)
+
     order_all = {
         query: join_seqs(
             query,
@@ -1724,37 +1778,41 @@ def main(
             "extended_circular" if query in path_circular else "extended_partial",
             maxk_length if query in path_circular else 0,
         )
-        for query in contig2assembly
+        for query in tqdm(contig2assembly, desc="Extending path of query")
     }
-    query2compare = (
-        i
-        for j in (
-            (
-                (contig, seq, overlap)
-                for contig, (seq, label, overlap) in query2extension.items()
-            ),
-            (
-                (contig, header2seq[contig], overlap)
-                for single_circle in (self_circular, self_circular_non_expected_overlap)
-                for contig in single_circle
-                for overlap in (
-                    self_circular_non_expected_overlap.get(contig, maxk_length),
-                )
-            ),
-        )
-        for i in j
+    # blast_half_file = f"{working_dir}/blast_pairs.tsv"
+    blast_half_file = run_blast_half(
+        (
+            i
+            for j in (
+                (
+                    (contig, seq, overlap)
+                    for contig, (seq, label, overlap) in query2extension.items()
+                ),
+                (
+                    (contig, header2seq[contig], overlap)
+                    for single_circle in (
+                        self_circular,
+                        self_circular_non_expected_overlap,
+                    )
+                    for contig in single_circle
+                    for overlap in (
+                        self_circular_non_expected_overlap.get(contig, maxk_length),
+                    )
+                ),
+            )
+            for i in j
+        ),
+        f"{working_dir}/blast_pairs.tsv",
+        threads=threads,
+        n=100,
     )
+    failed_blast_half = get_failed_blast_half(blast_half_file)
 
-    # for debug
-    print("# contig2assembly", file=debug, flush=True)
-    for k in sorted(contig2assembly):
-        print(k, sorted(contig2assembly[k]), file=debug, flush=True)
-
-    pd.Series(
-        {k: frozenset(v) for k, v in contig2assembly.items()}, name="assembly"
-    ).sort_index().drop_duplicates().apply(sorted).to_csv(
-        f"{working_dir}/contig2assembly.tsv", sep="\t"
-    )
+    query2stat = {
+        k: QueryCovVar.query(v, cov=cov, header2len=header2len)
+        for k, v in tqdm(contig2assembly.items(), "stat query length and coverage")
+    }
 
     query2groups = dict(
         enumerate(
@@ -1773,77 +1831,63 @@ def main(
             check_assembly_reason.items(), key=lambda x: (x[1][0], x[0])
         ):
             print(*item[1][:2], item[0], *item[1][2:], sep="\t", file=results)
-    failed_join_conflict = {
-        j: v[0]
-        for v in check_assembly_reason.values()
-        if v[1] == "conflict_query"
-        for i in query2groups[v[0]]
-        for j in contig2assembly[i]
-        if j in query_set
+    failed_joins = {
+        l: {
+            j: v[0]
+            for v in check_assembly_reason.values()
+            if v[1] == v1
+            for i in query2groups[v[0]]
+            for j in contig2assembly[i]
+            if j in query_set
+        }
+        for l, v1 in (
+            ("conflict", "conflict_query"),
+            ("circular_6", "circular_6_conflict"),
+            ("nolink", "nolink_query"),
+        )
     }
-    failed_join_circular_6 = {
-        j: v[0]
-        for v in check_assembly_reason.values()
-        if v[1] == "circular_6_conflict"
-        for i in query2groups[v[0]]
-        for j in contig2assembly[i]
-        if j in query_set
-    }
-    failed_join_nolink = {
-        j: v[0]
-        for v in check_assembly_reason.values()
-        if v[1] == "nolink_query"
-        for i in query2groups[v[0]]
-        for j in contig2assembly[i]
-        if j in query_set
-    }
-    failed_groups = (
-        set(failed_join_conflict.values())
-        | set(failed_join_circular_6.values())
-        | set(failed_join_nolink.values())
-    )
-    checked_assembly_strict = {
+    failed_groups = frozenset(i for f in failed_joins.values() for i in f.values())
+    checked_strict = {
         j: v[0]
         for k, v in check_assembly_reason.items()
         if v[1] in {"standalone", "longest"} and v[0] not in failed_groups
         for j in contig2assembly[k] & contig2assembly.keys()
     }
-    failed_join_list = (
-        failed_join_nolink.keys()
-        | failed_join_conflict.keys()
-        | failed_join_circular_6.keys()
-    )
+    failed_join_list = frozenset(i for f in failed_joins.values() for i in f.keys())
     redundant_circular_8 = {
         i: check_assembly_reason[i]
-        for i in checked_assembly_strict.keys()
+        for i in checked_strict.keys()
         if i in check_assembly_reason
         and check_assembly_reason[i][1] == "circular_8_tight"
     }
-
     assembly_rep = {
-        v[0]: max(v[3]) if len(v[3]) else i for i, v in check_assembly_reason.items()
+        max(v[3], key=lambda x: query2stat[x].seq_len) if len(v[3]) else i: v[0]
+        for i, v in check_assembly_reason.items()
     }
-    # for query in check_assembly_reason:
-    #    if check_assembly_reason[query][1]
+    checked_strict_rep = {
+        j: v[0]
+        for k, v in check_assembly_reason.items()
+        if v[1] in {"standalone", "longest"} and v[0] not in failed_groups
+        for j in v[3] or {k}
+        if j in assembly_rep and j not in failed_blast_half
+    }
 
     def check_check_assembly_reason():
         assert non_orphan_end_query == (
             self_circular
             | failed_join_potential
-            | failed_join_nolink.keys()
-            | failed_join_conflict.keys()
-            | failed_join_circular_6.keys()
-            | checked_assembly_strict.keys()
+            | failed_join_list
+            | checked_strict.keys()
         )
-        assert not checked_assembly_strict.keys() & failed_join_potential
-        assert not checked_assembly_strict.keys() & failed_join_nolink.keys()
-        assert not checked_assembly_strict.keys() & failed_join_conflict.keys()
-        assert not checked_assembly_strict.keys() & failed_join_circular_6.keys()
+        assert not checked_strict.keys() & failed_join_potential
+        assert not checked_strict.keys() & failed_joins["nolink"].keys()
+        assert not checked_strict.keys() & failed_joins["conflict"].keys()
+        assert not checked_strict.keys() & failed_joins["circular_6"].keys()
         assert not self_circular & self_circular_non_expected_overlap.keys()
         assert not any(
             {
                 query
-                for query in checked_assembly_strict
+                for query in checked_strict
                 for contig in contig2assembly[query]
                 if contig in failed_join_list
             }
@@ -1874,12 +1918,15 @@ def main(
                         ("self_circular", self_circular),
                         ("non_orphan_end_query", non_orphan_end_query),
                         ("failed_join_potential", failed_join_potential),
-                        ("failed_join_nolink", failed_join_nolink.keys()),
-                        ("failed_join_conflict", failed_join_conflict.keys()),
-                        ("failed_join_circular_6", failed_join_circular_6.keys()),
+                        ("failed_join_nolink", failed_joins["nolink"].keys()),
+                        ("failed_join_conflict", failed_joins["conflict"].keys()),
+                        ("failed_join_circular_6", failed_joins["circular_6"].keys()),
                         ("path_circular", path_circular),
-                        ("checked_assembly_strict", checked_assembly_strict.keys()),
+                        ("checked_strict", checked_strict.keys()),
+                        ("checked_strict_rep", checked_strict_rep.keys()),
+                        ("assembly_rep", assembly_rep.keys()),
                         ("redundant_circular_8", redundant_circular_8.keys()),
+                        ("failed_blast_half", failed_blast_half),
                     ]
                 ]
                 for pi, (i, li) in enumerate(ll)
@@ -1895,10 +1942,10 @@ def main(
                 f"{check_assembly_reason.get(query)=}",
                 f"{query in path_circular=}",
                 f"{query in failed_join_potential=}",
-                f"{query in failed_join_nolink=}",
-                f"{query in failed_join_conflict=}",
-                f"{query in failed_join_circular_6=}",
-                f"{query in checked_assembly_strict=}",
+                f"{query in failed_joins['nolink']=}",
+                f"{query in failed_joins['conflict']=}",
+                f"{query in failed_joins['circular_6']=}",
+                f"{query in checked_strict=}",
                 sep="\n",
             )
             print(query2groups.get(check_assembly_reason.get(query, [-1])[0]))
@@ -1980,61 +2027,9 @@ def main(
         log,
     )
 
-    def group_yield(data: Iterable[T], n=100):
-        d = iter(data)
-        while l := [i for i, _ in zip(d, range(n))]:
-            yield l
-
-    # Screening of contigs joined from closely related genomes using BLASTn comparison.
-    # To prevent the joining of fragmented contigs from closely related (sub)populations,
-    #   a BLASTn comparison is conducted
-    #     between the first half and second half of each joined COBRA sequence.
-    # If the two parts share a region with a minimum length of 1000 bp
-    #                                  and a minimum nucleotide similarity of 70%,
-    #   all the query contigs involved in the join are labeled as "extended_failed"
-    #     to indicate the failed extension.
-    # https://www.nature.com/articles/s41564-023-01598-2/figures/8
-    with (
-        concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor,
-        open(f"{working_dir}/blast_pairs.tsv", "w") as results,
-    ):
-        os.makedirs(f"{working_dir}/blast_temp")
-        futures = {
-            executor.submit(
-                write_and_run_blast, data_chunk, f"{working_dir}/blast_temp/tmp_{i}"
-            )
-            for i, data_chunk in enumerate(group_yield(query2compare))
-        }
-        for future in tqdm(
-            concurrent.futures.as_completed(futures),
-            desc="Running blastn",
-            total=len(futures),
-        ):
-            for query, (seq_len, blastns) in future.result().items():
-                for blastn_v in blastns:
-                    print(query, seq_len, *blastn_v[2:], sep="\t", file=results)
-
-    contig2TotLen: dict[str, float] = {}
-    with open(f"{working_dir}/blast_pairs.tsv") as r:
-        for line in r:
-            line_v = line.strip().split("\t")
-            if float(line_v[3]) >= 1000:
-                if "_extended" in line_v[0]:
-                    query = line_v[0].split("_extended")[0]
-                else:
-                    query = line_v[0]
-                contig2TotLen[query] = contig2TotLen.get(query, 0) + float(line_v[3])
-
-    # identify potential incorrect joins and remove them from corresponding category
-    failed_blast_half = frozenset(
-        contig for contig in contig2TotLen if contig2TotLen[contig] >= 1000
-    )
-
     # for debug
     print("# failed_blast_half", file=debug, flush=True)
     print(failed_blast_half, file=debug, flush=True)
-
-    # next we can select the best results for everything in
 
     ##
     # get the unique sequences of COBRA "Extended" query contigs for joining check
@@ -2053,61 +2048,49 @@ def main(
             f"{working_dir}/COBRA_category_ii-b_extended_partial_unique.fa", "w"
         ) as extended_partial_fasta,
     ):
-        for contig in query_set:
-            if (
-                contig in extended_circular_query
-                and contig not in redundant
-                and contig not in is_same_as_redundant
-            ):
-                extended_circular_fasta.write(
-                    ">" + contig + "_extended_circular" + "\n"
+        for contig in checked_strict_rep:
+            if contig in path_circular:
+                print(
+                    f">{contig}_{query2extension[contig][1]}\n{query2extension[contig][0]}\n",
+                    file=extended_circular_fasta,
+                    flush=True,
                 )
-                extended_circular_fasta.write(
-                    header2joined_seq[contig2extended_status[contig]] + "\n"
-                )
-                extended_circular_fasta.flush()
                 for item in order_all[contig]:
                     if contig_name(item) in query_set:
                         query2current[contig_name(item)] = contig + "_extended_circular"
-            elif (
-                contig in extended_partial_query
-                and contig not in redundant
-                and contig not in is_same_as_redundant
-            ):
-                extended_partial_fasta.write(">" + contig + "_extended_partial" + "\n")
-                extended_partial_fasta.write(
-                    header2joined_seq[contig2extended_status[contig]] + "\n"
+            else:
+                print(
+                    f">{contig}_{query2extension[contig][1]}\n{query2extension[contig][0]}\n",
+                    file=extended_partial_fasta,
+                    flush=True,
                 )
-                extended_partial_fasta.flush()
                 for item in order_all[contig]:
                     if contig_name(item) in query_set:
-                        if contig_name(item) in extended_partial_query:
-                            query2current[contig_name(item)] = (
-                                contig + "_extended_partial"
-                            )
-                        elif contig_name(item) in failed_join_list:
-                            query2current[contig_name(item)] = (
-                                contig + "_extended_partial"
-                            )
-                            extended_partial_query.add(contig_name(item))
-                            failed_join_list.remove(contig_name(item))
+                        if contig_name(item) in failed_join_list:
+                            raise RuntimeError("Impossible")
+                        query2current[contig_name(item)] = contig + "_extended_partial"
+
+    # next we can select the best results for everything in
+    is_subset_of: dict[str, str] = {}
+    extended_circular_query: set[str] = set()
+    extended_partial_query: set[str] = set()
+    all_joined_query: set[str] = set()
+    summary_fasta(
+        f"{working_dir}/COBRA_category_ii-a_extended_circular_unique.fasta",
+        maxk_length,
+        cov=cov,
+        self_circular=self_circular,
+        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
+    )
+    summary_fasta(
+        f"{working_dir}/COBRA_category_ii-b_extended_partial_unique.fasta",
+        maxk_length,
+        cov=cov,
+        self_circular=self_circular,
+        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
+    )
 
     os.chdir(f"{working_dir}")
-
-    summary_fasta(
-        "COBRA_category_ii-a_extended_circular_unique.fasta",
-        maxk_length,
-        cov=cov,
-        self_circular=self_circular,
-        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
-    )
-    summary_fasta(
-        "COBRA_category_ii-b_extended_partial_unique.fasta",
-        maxk_length,
-        cov=cov,
-        self_circular=self_circular,
-        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
-    )
 
     # for debug
     print("query2current", file=debug, flush=True)
