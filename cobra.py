@@ -346,7 +346,6 @@ def get_contig2join(
         """
         get potential joins for a given query
         """
-
         end = f"{contig}_{direction}"
         len_before_walk = len(contig2join[end])
         if len_before_walk == 0:
@@ -418,7 +417,7 @@ def get_contig2join(
             target = get_target(contig2join[end][-1])
             if target in one_path_end:
                 link_pair1 = link_pair[target][0]
-                if not_checked([link_pair1], contig_checked[end]):
+                if checked := not_checked([link_pair1], contig_checked[end]):
                     # inherent contig_name(link_pair1) != contig
                     # the same as ablove
                     checked_reason = ""
@@ -432,13 +431,9 @@ def get_contig2join(
                         contig2join_reason[contig][
                             contig_name(link_pair1)
                         ] = checked_reason
-                elif could_circulate(target, contig, direction):
-                    # 1. target is extendable (the only link_pair here)
-                    path_circular_end.add(end)
-                    contig2join_reason[contig][contig_name(target)] = "could_circulate"
             elif target in two_paths_end:
                 link_pair1, link_pair2 = link_pair[target]
-                if contig_name(link_pair1) != contig_name(link_pair2):
+                if checked := contig_name(link_pair1) != contig_name(link_pair2):
                     # >contig<
                     # .*.|----->
                     #    >contig of target<
@@ -485,11 +480,14 @@ def get_contig2join(
                                 contig2join_reason[contig][
                                     contig_name(link_pair_do)
                                 ] = checked_reason
-                        elif could_circulate(target, contig, direction):
-                            path_circular_end.add(end)
-                            contig2join_reason[contig][
-                                contig_name(target)
-                            ] = "could_circulate"
+            else:
+                checked = False
+            if checked and could_circulate(target, contig, direction):
+                # 1. target is extendable (the only link_pair here)
+                path_circular_end.add(end)
+                contig2join_reason[contig][contig_name(target)] = "could_circulate"
+                # In the first walk, path will never add it self
+                # In the following walks, paths will never be duplicated.
         return len_before_walk < len(contig2join[end])
 
     for contig in tqdm(
@@ -548,7 +546,8 @@ def join_seqs(
         # check if path is circular
         # then we can add right to it
         # TODO+FIXME: Compared with contig2assembly,
-        #             what's the problem if path_circular_end in the middle of some path?
+        #          1. what's the problem if path_circular_end in the middle of some path?
+        #          2. what's the problem if some contig exist at both wind of a query?
         if contig2join[left] and contig2join[right]:
             # only when we add those in both contig2join[left] and contig2join[right]
             # and drop duplicates
@@ -564,6 +563,15 @@ def join_seqs(
     # elif left in path_circular:
     #   not extend right to order_all_ and just return
     return order_all_
+
+
+def seqjoin2contig(seqjoin: Iterable[str]):
+    used_queries = set()
+    for item in seqjoin:
+        contig = contig_name(item)
+        if contig not in used_queries:
+            yield item
+            used_queries.add(contig)
 
 
 def retrieve(contig: str, order_all: dict[str, list[str]], header2seq: dict[str, Seq]):
@@ -617,86 +625,47 @@ def summary_fasta(
     """
     summary basic information of a fasta file
     """
-    summary_file = open(f"{fasta_file}.summary.txt", "w")
     summary_file_headers = ["SeqID", "Length", "Coverage", "GC", "Ns"]
     if "self_circular" in fasta_file:
         summary_file_headers.append("DTR_length")
-    summary_file.write("\t".join(summary_file_headers) + "\n")
-    summary_file.flush()
+    with open(f"{fasta_file}.summary.txt", "w") as so:
+        print(*summary_file_headers, sep="\t", file=so)
 
-    record: SeqIO.SeqRecord
-    for record in SeqIO.parse(f"{fasta_file}", "fasta"):
-        header = str(record.id).strip()
-        seq: Seq = record.seq
-        sequence_stats = [
-            header,
-            str(len(seq)),
-            "",
-            str(round(GC(seq), 3)),
-            str(seq.count("N")),
-        ]
-        if header.split("_self")[0] in self_circular:
-            sequence_stats[2] = str(cov[header.split("_self")[0]])
-            sequence_stats.append(str(length))
-        elif header.split("_self")[0] in self_circular_non_expected_overlap:
-            sequence_stats[2] = str(cov[header.split("_self")[0]])
-            sequence_stats.append(
-                str(self_circular_non_expected_overlap[header.split("_self")[0]])
-            )
-        else:
-            sequence_stats[2] = str(cov[header.split("_extended")[0]])
-        summary_file.write("\t".join(sequence_stats) + "\n")
-
-
-def get_joined_seqs(fasta_file: str):
-    joined_seqs: list[str] = []
-    with open(fasta_file) as a:
-        for line in a:
-            if line.startswith(">"):
-                joined_seqs.append(line.strip().split(" ")[0][1:])
-    all_joined_query.update(joined_seqs)
-    return ",".join(joined_seqs[:])
-
-
-def summarize(contig: str, header2len: dict[str, Seq]):
-    """
-    summary the retrieved contigs and joined information of each query
-    """
-    if contig not in is_subset_of:
-        item = contig
-    else:
-        if is_subset_of[contig] in is_subset_of:
-            item = is_subset_of[is_subset_of[contig]]
-        else:
-            item = is_subset_of[contig]
-    b = count_seq(
-        f"COBRA_retrieved_for_joining/{item}_retrieved.fa"
-    )  # number of retrieved contigs
-    c = count_len(
-        f"COBRA_retrieved_for_joining/{item}_retrieved.fa"
-    )  # total length of retrieved contigs
-    d = count_len(
-        f"COBRA_retrieved_for_joining/{item}_retrieved_joined.fa"
-    )  # total length after joining
-    e = get_joined_seqs(f"COBRA_retrieved_for_joining/{item}_retrieved.fa")
-    if contig in extended_circular_query:
-        exteneded = "Extended_circular"
-    elif contig in extended_partial_query:
-        exteneded = "Extended_partial"
-    return b, e, c, d, d - header2len[contig], exteneded
+        record: SeqIO.SeqRecord
+        for record in SeqIO.parse(f"{fasta_file}", "fasta"):
+            header = str(record.id).strip()
+            seq: Seq = record.seq
+            sequence_stats = [
+                header,
+                str(len(seq)),
+                "",
+                str(round(GC(seq), 3)),
+                str(seq.count("N")),
+            ]
+            if "self_circular" in fasta_file:
+                sequence_stats[2] = str(cov[header.split("_self")[0]])
+                if header.split("_self")[0] in self_circular:
+                    sequence_stats.append(str(length))
+                else:
+                    # header.split("_self")[0] in self_circular_non_expected_overlap:
+                    sequence_stats.append(
+                        str(
+                            self_circular_non_expected_overlap[header.split("_self")[0]]
+                        )
+                    )
+            else:
+                sequence_stats[2] = str(cov[header.split("_extended")[0]])
+            print(*sequence_stats, sep="\t", file=so)
 
 
 def get_direction(item: str):
     """
     get the direction in a joining path
     """
-    if item.endswith("rc"):
-        return "reverse"
-    else:
-        return "forward"
+    return "reverse" if item.endswith("rc") else "forward"
 
 
-def total_length(contig_list: list[str], header2len: dict[str, Seq]):
+def total_length(contig_list: list[str], header2len: dict[str, int]):
     """
     get the total length of all sequences in a joining path before overlap removing
     """
@@ -1973,13 +1942,13 @@ def main(
 
     # for debug
     print("# retrieved order_all", file=debug, flush=True)
-    for contig in sorted(order_all):
+    for query in sorted(order_all):
         with open(
-            f"{working_dir}/COBRA_retrieved_for_joining/{contig}_retrieved.fa", "w"
+            f"{working_dir}/COBRA_retrieved_for_joining/{query}_retrieved.fa", "w"
         ) as out:
-            for item in {contig_name(i) for i in order_all[contig]}:
+            for item in seqjoin2contig(order_all[query]):
                 print(f">{item}\n{header2seq[item]}", file=out)
-        print(order_all[contig], file=debug, flush=True)
+        print(order_all[query], file=debug, flush=True)
 
     ##
     # writing joined sequences
@@ -2048,33 +2017,36 @@ def main(
             f"{working_dir}/COBRA_category_ii-b_extended_partial_unique.fa", "w"
         ) as extended_partial_fasta,
     ):
-        for contig in checked_strict_rep:
-            if contig in path_circular:
+        for query in checked_strict_rep:
+            if query in path_circular:
                 print(
-                    f">{contig}_{query2extension[contig][1]}\n{query2extension[contig][0]}\n",
+                    f">{query}_{query2extension[query][1]}\n{query2extension[query][0]}\n",
                     file=extended_circular_fasta,
                     flush=True,
                 )
-                for item in order_all[contig]:
+                for item in order_all[query]:
                     if contig_name(item) in query_set:
-                        query2current[contig_name(item)] = contig + "_extended_circular"
+                        query2current[contig_name(item)] = query + "_extended_circular"
             else:
                 print(
-                    f">{contig}_{query2extension[contig][1]}\n{query2extension[contig][0]}\n",
+                    f">{query}_{query2extension[query][1]}\n{query2extension[query][0]}\n",
                     file=extended_partial_fasta,
                     flush=True,
                 )
-                for item in order_all[contig]:
+                for item in order_all[query]:
                     if contig_name(item) in query_set:
                         if contig_name(item) in failed_join_list:
                             raise RuntimeError("Impossible")
-                        query2current[contig_name(item)] = contig + "_extended_partial"
+                        query2current[contig_name(item)] = query + "_extended_partial"
+
+    # for debug
+    print("query2current", file=debug, flush=True)
+    print(query2current, file=debug, flush=True)
+    debug.close()
 
     # next we can select the best results for everything in
-    is_subset_of: dict[str, str] = {}
     extended_circular_query: set[str] = set()
     extended_partial_query: set[str] = set()
-    all_joined_query: set[str] = set()
     summary_fasta(
         f"{working_dir}/COBRA_category_ii-a_extended_circular_unique.fasta",
         maxk_length,
@@ -2090,13 +2062,6 @@ def main(
         self_circular_non_expected_overlap=self_circular_non_expected_overlap,
     )
 
-    os.chdir(f"{working_dir}")
-
-    # for debug
-    print("query2current", file=debug, flush=True)
-    print(query2current, file=debug, flush=True)
-    debug.close()
-
     ##
     # save the joining details information
     log_info(
@@ -2105,234 +2070,119 @@ def main(
         log,
     )
     joining_detail_headers = [
-        "Final_Seq_ID",
-        "Joined_Len",
-        "Status",
-        "Joined_Seq_ID",
-        "Direction",
-        "Joined_Seq_Len",
-        "Start",
-        "End",
-        "Joined_Seq_Cov",
-        "Joined_Seq_GC",
-        "Joined_reason",
+        *("Final_Seq_ID", "Joined_Len", "Status"),
+        *("Joined_Seq_ID", "Direction", "Joined_Seq_Len"),
+        *("Start", "End", "Joined_Seq_Cov", "Joined_Seq_GC", "Joined_reason"),
     ]
-    extended_circular_joining_details = open(
-        "COBRA_category_ii-a_extended_circular_unique_joining_details.txt", "w"
-    )
-    extended_circular_joining_details.write("\t".join(joining_detail_headers[:]) + "\n")
-    extended_partial_joining_details = open(
-        "COBRA_category_ii-b_extended_partial_unique_joining_details.txt", "w"
-    )
-    extended_partial_joining_details.write("\t".join(joining_detail_headers[:]) + "\n")
-    contig2join_details: dict[str, list[str]] = {}
-
-    for contig in order_all.keys():
+    contig2join_details: dict[
+        str,
+        list[
+            tuple[
+                str,
+                int,
+                Literal["Circular", "Partial"],
+                str,
+                Literal["forward", "reverse"],
+                int,
+                int,
+                int,
+                float,
+                float,
+                str,
+            ]
+        ],
+    ] = {}
+    for query in tqdm(
+        checked_strict_rep,
+        desc="Getting the joining details of extended query contigs.",
+    ):
         site = 1
-        if (
-            contig in path_circular
-            and contig not in redundant
-            and contig not in is_same_as_redundant
-            and contig not in failed_join_list
-        ):
-            contig2join_details[contig + "_extended_circular"] = []
-            for item in order_all[contig][:-1]:
-                if get_direction(item) == "forward":
-                    contents = [
-                        contig + "_extended_circular",
-                        str(
-                            total_length(order_all[contig], header2len=header2len)
-                            - maxk_length * (len(order_all[contig]) - 1)
-                        ),
-                        "Circular",
-                        contig_name(item),
-                        "forward",
-                        str(header2len[contig_name(item)]),
-                        str(site),
-                        str(site + header2len[contig_name(item)] - 1),
-                        str(cov[contig_name(item)]),
-                        str(round(GC(header2seq[contig_name(item)]), 3)),
-                        contig2join_reason[contig][contig_name(item)],
-                    ]
-                    contig2join_details[contig + "_extended_circular"].append(
-                        "\t".join(contents[:])
-                    )
-                    site += header2len[contig_name(item)] - maxk_length
-                else:
-                    contents = [
-                        contig + "_extended_circular",
-                        str(
-                            total_length(order_all[contig], header2len=header2len)
-                            - maxk_length * (len(order_all[contig]) - 1)
-                        ),
-                        "Circular",
-                        contig_name(item) + "_rc",
-                        "reverse",
-                        str(header2len[contig_name(item)]),
-                        str(site + header2len[contig_name(item)] - 1),
-                        str(site),
-                        str(cov[contig_name(item)]),
-                        str(round(GC(header2seq[contig_name(item)]), 3)),
-                        contig2join_reason[contig][contig_name(item)],
-                    ]
-                    contig2join_details[contig + "_extended_circular"].append(
-                        "\t".join(contents[:])
-                    )
-                    site += header2len[contig_name(item)] - maxk_length
-
-            last = order_all[contig][-1]
-            if get_direction(last) == "forward":
-                contents = [
-                    contig + "_extended_circular",
-                    str(
-                        total_length(order_all[contig], header2len=header2len)
-                        - maxk_length * (len(order_all[contig]) - 1)
-                    ),
-                    "Circular",
-                    contig_name(last),
-                    "forward",
-                    str(header2len[contig_name(last)]),
-                    str(site),
-                    str(site + header2len[contig_name(last)] - 1),  # length - 1),
-                    str(cov[contig_name(last)]),
-                    str(round(GC(header2seq[contig_name(last)]), 3)),
-                    contig2join_reason[contig][contig_name(last)],
-                    "\n",
-                ]
-                contig2join_details[contig + "_extended_circular"].append(
-                    "\t".join(contents[:])
-                )
-
-            else:
-                contents = [
-                    contig + "_extended_circular",
-                    str(
-                        total_length(order_all[contig], header2len=header2len)
-                        - maxk_length * (len(order_all[contig]) - 1)
-                    ),
-                    "Circular",
-                    contig_name(last) + "_rc",
-                    "reverse",
-                    str(header2len[contig_name(last)]),
-                    str(site + header2len[contig_name(last)] - 1),  # - length - 1),
-                    str(site),
-                    str(cov[contig_name(last)]),
-                    str(round(GC(header2seq[contig_name(last)]), 3)),
-                    contig2join_reason[contig][contig_name(last)],
-                    "\n",
-                ]
-                contig2join_details[contig + "_extended_circular"].append(
-                    "\t".join(contents[:])
-                )
-        elif (
-            contig in extended_partial_query
-            and contig not in redundant
-            and contig not in is_same_as_redundant
-        ):
-            contig2join_details[contig + "_extended_partial"] = []
-            for item in order_all[contig][:-1]:
-                if get_direction(item) == "forward":
-                    contents = [
-                        contig + "_extended_partial",
-                        str(
-                            total_length(order_all[contig], header2len=header2len)
-                            - maxk_length * (len(order_all[contig]) - 1)
-                        ),
-                        "Partial",
-                        contig_name(item),
-                        "forward",
-                        str(header2len[contig_name(item)]),
-                        str(site),
-                        str(site + header2len[contig_name(item)] - 1),
-                        str(cov[contig_name(item)]),
-                        str(round(GC(header2seq[contig_name(item)]), 3)),
-                        contig2join_reason[contig][contig_name(item)],
-                    ]
-                    contig2join_details[contig + "_extended_partial"].append(
-                        "\t".join(contents[:])
-                    )
-                    site += header2len[contig_name(item)] - maxk_length
-                else:
-                    contents = [
-                        contig + "_extended_partial",
-                        str(
-                            total_length(order_all[contig], header2len=header2len)
-                            - maxk_length * (len(order_all[contig]) - 1)
-                        ),
-                        "Partial",
-                        contig_name(item) + "_rc",
-                        "reverse",
-                        str(header2len[contig_name(item)]),
-                        str(site + header2len[contig_name(item)] - 1),
-                        str(site),
-                        str(cov[contig_name(item)]),
-                        str(round(GC(header2seq[contig_name(item)]), 3)),
-                        contig2join_reason[contig][contig_name(item)],
-                    ]
-                    contig2join_details[contig + "_extended_partial"].append(
-                        "\t".join(contents[:])
-                    )
-                    site += header2len[contig_name(item)] - maxk_length
-
-            last = order_all[contig][
-                -1
-            ]  # for the last one in non-circular path, the end position should be different
-            if get_direction(last) == "forward":
-                contents = [
-                    contig + "_extended_partial",
-                    str(
-                        total_length(order_all[contig], header2len=header2len)
-                        - maxk_length * (len(order_all[contig]) - 1)
-                    ),
-                    "Partial",
-                    contig_name(last),
-                    "forward",
-                    str(header2len[contig_name(last)]),
-                    str(site),
-                    str(site + header2len[contig_name(last)] - 1),
-                    str(cov[contig_name(last)]),
-                    str(round(GC(header2seq[contig_name(last)]), 3)),
-                    contig2join_reason[contig][contig_name(last)],
-                    "\n",
-                ]
-                contig2join_details[contig + "_extended_partial"].append(
-                    "\t".join(contents[:])
-                )
-            else:
-                contents = [
-                    contig + "_extended_partial",
-                    str(
-                        total_length(order_all[contig], header2len=header2len)
-                        - maxk_length * (len(order_all[contig]) - 1)
-                    ),
-                    "Partial",
-                    contig_name(last) + "_rc",
-                    "reverse",
-                    str(header2len[contig_name(last)]),
-                    str(site + header2len[contig_name(last)] - 1),
-                    str(site),
-                    str(cov[contig_name(last)]),
-                    str(round(GC(header2seq[contig_name(last)]), 3)),
-                    contig2join_reason[contig][contig_name(last)],
-                    "\n",
-                ]
-                contig2join_details[contig + "_extended_partial"].append(
-                    "\t".join(contents[:])
-                )
-        else:
-            pass
-
-    for seq in contig2join_details.keys():
-        if "circular" in seq:
-            extended_circular_joining_details.write(
-                "\n".join(contig2join_details[seq][:])
+        query_extend_id = f"{query}_{query2extension[query][1]}"
+        if query in path_circular:
+            contig2join_details[query_extend_id] = []
+            query_values: tuple[str, int, Literal["Circular", "Partial"]] = (
+                query_extend_id,
+                len(query2extension[query][0]) - query2extension[query][2],
+                "Circular",
             )
+            for item in order_all[query]:
+                contig = contig_name(item)
+                if (direction := get_direction(item)) == "forward":
+                    contig_start_end: tuple[str, int, int] = (
+                        contig,
+                        site,
+                        site + header2len[contig] - 1,
+                    )
+                else:
+                    contig_start_end = (
+                        f"{contig}_rc",
+                        site,
+                        site + header2len[contig] - 1,
+                    )
+                contig2join_details[query_extend_id].append(
+                    (
+                        *query_values,
+                        contig_start_end[0],
+                        direction,
+                        header2len[contig],
+                        contig_start_end[1],
+                        contig_start_end[2],
+                        cov[contig],
+                        round(GC(header2seq[contig]), 3),
+                        contig2join_reason[query][contig],
+                    )
+                )
+                site += header2len[contig] - maxk_length
         else:
-            extended_partial_joining_details.write(
-                "\n".join(contig2join_details[seq][:])
+            contig2join_details[query_extend_id] = []
+            query_values = (
+                query_extend_id,
+                len(query2extension[query][0]) - query2extension[query][2],
+                "Partial",
             )
-    extended_circular_joining_details.close()
-    extended_partial_joining_details.close()
+            for item in order_all[query]:
+                contig = contig_name(item)
+                if (direction := get_direction(item)) == "forward":
+                    contig_start_end = (contig, site, site + header2len[contig] - 1)
+                else:
+                    contig_start_end = (
+                        f"{contig}_rc",
+                        site,
+                        site + header2len[contig] - 1,
+                    )
+                contig2join_details[query_extend_id].append(
+                    (
+                        *query_values,
+                        contig_start_end[0],
+                        direction,
+                        header2len[contig],
+                        *contig_start_end[1:],
+                        cov[contig],
+                        round(GC(header2seq[contig]), 3),
+                        contig2join_reason[query][contig],
+                    )
+                )
+                site += header2len[contig] - maxk_length
+
+    with (
+        open(
+            f"{working_dir}/COBRA_category_ii-a_extended_circular_unique_joining_details.txt",
+            "w",
+        ) as detail_circular,
+        open(
+            f"{working_dir}/COBRA_category_ii-b_extended_partial_unique_joining_details.txt",
+            "w",
+        ) as detail_partial,
+    ):
+        print(*joining_detail_headers, sep="\t", file=detail_circular)
+        print(*joining_detail_headers, sep="\t", file=detail_partial)
+        for seq in contig2join_details.keys():
+            for detail_values in contig2join_details[seq]:
+                print(
+                    *detail_values,
+                    sep="\t",
+                    file=detail_circular if "circular" in seq else detail_partial,
+                )
 
     ##
     # save the joining summary information
@@ -2341,106 +2191,83 @@ def main(
         'Saving joining summary of "Extended_circular" and "Extended_partial" query contigs.',
         log,
     )
-    assembly_summary = open("COBRA_joining_summary.txt", "w")
-    assembly_summary_headers = [
-        "Query_Seq_ID",
-        "Query_Seq_Len",
-        "Total_Joined_Seqs",
-        "Joined_seqs",
-        "Total_Joined_Len",
-        "Assembled_Len",
-        "Extended_Len",
-        "Status",
-        "Final_Seq_ID",
-    ]
-    assembly_summary.write("\t".join(assembly_summary_headers[:]) + "\n")
 
-    for contig in list(extended_circular_query) + list(extended_partial_query):
-        if contig in query2current.keys():
-            assembly_summary.write(
-                "\t".join(
-                    [
-                        contig,
-                        str(header2len[contig]),
-                        *(str(i) for i in summarize(contig, header2len=header2len)),
-                        query2current[contig],
-                    ]
+    query_success = {
+        contig: query
+        for query in checked_strict_rep
+        for contig in contig2assembly[query]
+    }
+    with open(f"{working_dir}/COBRA_joining_summary.txt", "w") as assembly_summary:
+        print(
+            *("Query_Seq_ID", "Query_Seq_Len"),
+            *("Total_Joined_Seqs", "Joined_seqs", "Total_Joined_Len"),
+            *("Assembled_Len", "Extended_Len", "Status", "Final_Seq_ID"),
+            sep="\t",
+            file=assembly_summary,
+        )
+        for query in sorted(checked_strict_rep):
+            for contig in sorted(contig2assembly[query] & query_set):
+                d = len(query2extension[query][0]) - query2extension[query][2]
+                print(
+                    contig,
+                    header2len[contig],
+                    query2stat[query].query_count,
+                    ",".join(seqjoin2contig(order_all[query])),
+                    query2stat[query].seq_len,
+                    d,
+                    d - header2len[contig],
+                    query2extension[query][1],
+                    f"{query}_{query2extension[query][1]}",
+                    sep="\t",
+                    file=assembly_summary,
                 )
-                + "\n"
-            )
-        else:
-            if contig in extended_circular_query:
-                extended_circular_query.remove(contig)
-                failed_join_list.append(contig)
-            elif contig in extended_partial_query:
-                extended_partial_query.remove(contig)
-                failed_join_list.append(contig)
-            else:
-                pass
-    assembly_summary.close()
 
     ##
     # save the joining status information of each query
     log_info("[21/23]", "Saving joining status of all query contigs.", log)
     assembled_info = open(
-        "COBRA_joining_status.txt", "w"
+        f"{working_dir}/COBRA_joining_status.txt", "w"
     )  # shows the COBRA status of each query
-    assembled_info.write(
-        "\t".join(["SeqID", "Length", "Coverage", "GC", "Status", "Category"])
+    print(
+        *("SeqID", "Length", "Coverage", "GC", "Status", "Category"),
+        sep="\t",
+        file=assembled_info,
     )
 
     # for those could be extended to circular
-    for contig in extended_circular_query:
-        assembled_info.write(
-            contig
-            + "\t"
-            + str(header2len[contig])
-            + "\t"
-            + str(cov[contig])
-            + "\t"
-            + str(round(GC(header2seq[contig_name(contig)]), 3))
-            + "\t"
-            + "Extended_circular"
-            + "\t"
-            + "category_ii-a"
-            + "\n"
-        )
+    for label in enumerate(("extended_circular", "extended_partial")):
+        for query in sorted(query_success):
+            if query2extension[query_success[query]][1] == label:
+                print(
+                    query,
+                    header2len[query],
+                    cov[query],
+                    round(GC(header2seq[contig_name(query)]), 3),
+                    label[1],
+                    f"category_ii-{'ab'[label[0]]}",
+                    sep="\t",
+                    file=assembled_info,
+                )
 
-    # for those could be extended ok
-    for contig in extended_partial_query:
-        assembled_info.write(
-            contig
-            + "\t"
-            + str(header2len[contig])
-            + "\t"
-            + str(cov[contig])
-            + "\t"
-            + str(round(GC(header2seq[contig_name(contig)]), 3))
-            + "\t"
-            + "Extended_partial"
-            + "\t"
-            + "category_ii-b"
-            + "\n"
-        )
-
+    os.chdir(f"{working_dir}")
     # for those cannot be extended
     failed_join = open("COBRA_category_ii-c_extended_failed.fasta", "w")
-    for contig in set(failed_join_list):
+    for query in sorted(failed_join_list):
         if (
-            contig not in extended_circular_query
-            or contig not in extended_partial_query
-            or contig not in orphan_end_query
+            query not in extended_circular_query
+            or query not in extended_partial_query
+            or query not in orphan_end_query
         ):
-            failed_join.write(">" + contig + "\n")
-            failed_join.write(header2seq[contig] + "\n")
+            failed_join.write(">" + query + "\n")
+            failed_join.write(header2seq[query] + "\n")
             assembled_info.write(
-                contig
+                query
                 + "\t"
-                + str(header2len[contig])
+                + str(header2len[query])
                 + "\t"
-                + str(cov[contig])
+                + str(cov[query])
                 + "\t"
-                + str(round(GC(header2seq[contig_name(contig)]), 3))
+                + str(round(GC(header2seq[contig_name(query)]), 3))
                 + "\t"
                 + "Extended_failed"
                 + "\t"
@@ -2460,17 +2287,17 @@ def main(
 
     # for those due to orphan end
     orphan_end = open("COBRA_category_iii_orphan_end.fasta", "w")
-    for contig in orphan_end_query:
-        orphan_end.write(">" + contig + "\n")
-        orphan_end.write(header2seq[contig] + "\n")
+    for query in orphan_end_query:
+        orphan_end.write(">" + query + "\n")
+        orphan_end.write(header2seq[query] + "\n")
         assembled_info.write(
-            contig
+            query
             + "\t"
-            + str(header2len[contig])
+            + str(header2len[query])
             + "\t"
-            + str(cov[contig])
+            + str(cov[query])
             + "\t"
-            + str(round(GC(header2seq[contig_name(contig)]), 3))
+            + str(round(GC(header2seq[contig_name(query)]), 3))
             + "\t"
             + "Orphan_end"
             + "\t"
@@ -2490,41 +2317,41 @@ def main(
     log_info("[22/23]", "Saving self_circular contigs.", log)
     circular_fasta = open("COBRA_category_i_self_circular.fasta", "w")
 
-    for contig in self_circular:
+    for query in self_circular:
         assembled_info.write(
-            contig
+            query
             + "\t"
-            + str(header2len[contig] - maxk_length)
+            + str(header2len[query] - maxk_length)
             + "\t"
-            + str(cov[contig])
+            + str(cov[query])
             + "\t"
-            + str(round(GC(header2seq[contig_name(contig)]), 3))
+            + str(round(GC(header2seq[contig_name(query)]), 3))
             + "\t"
             + "Self_circular"
             + "\t"
             + "category_i"
             + "\n"
         )
-        circular_fasta.write(">" + contig + "_self_circular" + "\n")
-        circular_fasta.write(header2seq[contig] + "\n")
+        circular_fasta.write(">" + query + "_self_circular" + "\n")
+        circular_fasta.write(header2seq[query] + "\n")
 
-    for contig in self_circular_non_expected_overlap.keys():
+    for query in self_circular_non_expected_overlap.keys():
         assembled_info.write(
-            contig
+            query
             + "\t"
-            + str(header2len[contig] - self_circular_non_expected_overlap[contig])
+            + str(header2len[query] - self_circular_non_expected_overlap[query])
             + "\t"
-            + str(cov[contig])
+            + str(cov[query])
             + "\t"
-            + str(round(GC(header2seq[contig_name(contig)]), 3))
+            + str(round(GC(header2seq[contig_name(query)]), 3))
             + "\t"
             + "Self_circular"
             + "\t"
             + "category_i"
             + "\n"
         )
-        circular_fasta.write(">" + contig + "_self_circular" + "\n")
-        circular_fasta.write(header2seq[contig] + "\n")
+        circular_fasta.write(">" + query + "_self_circular" + "\n")
+        circular_fasta.write(header2seq[query] + "\n")
 
     circular_fasta.close()
     assembled_info.close()
@@ -2540,12 +2367,10 @@ def main(
     # save new fasta file with all the others used in joining replaced by COBRA sequences excepting self_circular ones
     log_info("[23/23]", "Saving the new fasta file.", log)
 
-    for contig in all_joined_query:
-        del header2seq[contig]
-
     with open("{0}.new.fa".format(fasta_name.rsplit(".", 1)[0]), "w") as new:
         for header, sequence in header2seq.items():
-            new.write(f">{header}\n{sequence}\n")
+            if header not in query_success:
+                new.write(f">{header}\n{sequence}\n")
 
     os.system(
         "cat {0}.new.fa COBRA_category_ii-a_extended_circular_unique.fasta "
