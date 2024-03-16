@@ -574,32 +574,6 @@ def seqjoin2contig(seqjoin: Iterable[str]):
             used_queries.add(contig)
 
 
-def count_seq(fasta_file: str):
-    """
-    calculate the number of seqs in a fasta file
-    """
-    seq_num = 0
-    a = open(fasta_file, "r")
-    for line in a.readlines():
-        if line.startswith(">"):
-            seq_num += 1
-    a.close()
-    return seq_num
-
-
-def count_len(fasta_file: str):
-    """
-    calculate the length of sequences in a fasta file
-    """
-    seq_len = 0
-    a = open(fasta_file, "r")
-    for line in a.readlines():
-        if not line.startswith(">"):
-            seq_len += len(line.strip())
-    a.close()
-    return seq_len
-
-
 def summary_fasta(
     fasta_file: str,
     length: int,
@@ -837,7 +811,7 @@ def get_parsed_linkage(
     mapping_file: str,
     trim_readno: Literal["no", "trim", "auto"],
     header2len: dict[str, int],
-    orphan_end_query: set[str],
+    orphan_end_query: frozenset[str],
     linkage_mismatch: int,
 ):
     parsed_linkage: set[tuple[str, str]] = set()
@@ -1581,18 +1555,17 @@ def main(
     query_set = get_query_set(f"{query_fa}", uniset=header2seq)
 
     # distinguish orphan_end_query and non_orphan_end_query:
-    orphan_end_query = {
+    orphan_end_query_1 = frozenset(
         header
         for header in query_set
         if header + "_L" not in link_pair.keys()
         and header + "_R" not in link_pair.keys()
-    }
-    non_orphan_end_query = query_set - orphan_end_query
+    )
 
     #
     print(
         f"A total of {len(query_set)} query contigs were imported, "
-        f"with {len(orphan_end_query)} orphan end query.",
+        f"with {len(orphan_end_query_1)} query with unique end (orphan).",
         file=log,
         flush=True,
     )
@@ -1609,19 +1582,19 @@ def main(
         mapping_file,
         trim_readno=trim_readno,
         header2len=header2len,
-        orphan_end_query=orphan_end_query,
+        orphan_end_query=orphan_end_query_1,
         linkage_mismatch=linkage_mismatch,
     )
-
+    ###########################################################################
+    ## Now all file are already loaded.                                      ##
+    ###########################################################################
     log_info("[07/23]", "Parsing the linkage information.", log)
     ##
     log_info("[08/23]", "Detecting self_circular contigs. ", log)
 
     self_circular = frozenset(
         contig
-        for contig in tqdm(
-            non_orphan_end_query, desc="Detecting self_circular contigs."
-        )
+        for contig in tqdm(query_set, desc="Detecting self_circular contigs.")
         if detect_self_circular(
             contig,
             one_path_end=one_path_end,
@@ -1644,8 +1617,7 @@ def main(
         for contig in parsed_contig_spanned_by_PE_reads
         if (l := check_self_circular_soft(header2seq[contig], min_over_len)) > 0
     }
-    orphan_end_query_1 = frozenset(orphan_end_query)
-    orphan_end_query -= self_circular_non_expected_overlap.keys()
+    orphan_end_query = orphan_end_query_1 - self_circular_non_expected_overlap.keys()
 
     # debug
     print(
@@ -1823,6 +1795,7 @@ def main(
     }
 
     def check_check_assembly_reason():
+        non_orphan_end_query = query_set - orphan_end_query_1
         assert non_orphan_end_query == (
             self_circular
             | failed_join_potential
@@ -1842,16 +1815,27 @@ def main(
                 if contig in failed_join_list
             }
         )
+
+        def compre_sets(p: int, li: set, lj: set):
+            if p < 0:
+                return ""
+            if p == 0:
+                return f"{len(li)}"
+            i, j, ij = len(li), len(lj), len(li & lj)
+            if i == j:
+                return f"=="
+            if i == ij:
+                return ">"
+            if j == ij:
+                return "<"
+            return f"{ij}"
+
         print(
             *(
                 "\t".join(
                     [
                         *(
-                            (
-                                ""
-                                if pi < pj
-                                else (f"{len(li)}" if i == j else f"{len(li & lj)}")
-                            )
+                            compre_sets(pi - pj, li, lj)
                             for pj, (j, lj) in enumerate(ll)
                         ),
                         f"{i}",
@@ -1926,25 +1910,10 @@ def main(
     ##
     # writing joined sequences
     log_info("[16/23]", "Saving joined seqeuences.", log)
-    contig2extended_status: dict[str, str] = {}
-    header2joined_seq: dict[str, Seq] = {}
-    for query in tqdm(order_all):
-        contig_label = query + (
-            "_extended_circular" if query in path_circular else "_extended_partial"
-        )
-        contig2extended_status[query] = contig_label
-        header2joined_seq[contig_label] = extend_query(
-            order_all[query], header2seq=header2seq, maxk_length=maxk_length
-        )
-
-    print("contig2extended_status", file=debug, flush=True)
-    print(contig2extended_status, file=debug, flush=True)
-    print("header2joined_seq", file=debug, flush=True)
-    print(sorted(header2joined_seq), file=debug, flush=True)
 
     # make blastn database and run search if the database is not empty
     if (
-        (not header2joined_seq)
+        (not checked_strict_rep)
         and (not self_circular)
         and (not self_circular_non_expected_overlap)
     ):
@@ -2000,20 +1969,6 @@ def main(
                     query2current[contig_name(item)] = (
                         f"{query}_{query2extension[query][1]}"
                     )
-    summary_fasta(
-        extended_circular_fasta.name,
-        maxk_length,
-        cov=cov,
-        self_circular=self_circular,
-        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
-    )
-    summary_fasta(
-        extended_partial_fasta.name,
-        maxk_length,
-        cov=cov,
-        self_circular=self_circular,
-        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
-    )
 
     # for debug
     print("query2current", file=debug, flush=True)
@@ -2237,13 +2192,6 @@ def main(
                 sep="\t",
                 file=assembled_info,
             )
-    summary_fasta(
-        failed_join.name,
-        maxk_length,
-        cov=cov,
-        self_circular=self_circular,
-        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
-    )
 
     # for those due to orphan end
     with open(f"{working_dir}/COBRA_category_iii_orphan_end.fa", "w") as orphan_end:
@@ -2261,13 +2209,6 @@ def main(
                 sep="\t",
                 file=assembled_info,
             )
-    summary_fasta(
-        orphan_end.name,
-        maxk_length,
-        cov=cov,
-        self_circular=self_circular,
-        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
-    )
 
     # for self circular
     log_info("[22/23]", "Saving self_circular contigs.", log)
@@ -2301,14 +2242,22 @@ def main(
                 sep="\t",
                 file=assembled_info,
             )
-    summary_fasta(
-        circular_fasta.name,
-        maxk_length,
-        cov=cov,
-        self_circular=self_circular,
-        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
-    )
     assembled_info.close()
+
+    for outio in (
+        extended_circular_fasta,
+        extended_partial_fasta,
+        failed_join,
+        orphan_end,
+        circular_fasta,
+    ):
+        summary_fasta(
+            outio.name,
+            maxk_length,
+            cov=cov,
+            self_circular=self_circular,
+            self_circular_non_expected_overlap=self_circular_non_expected_overlap,
+        )
 
     ##
     # save new fasta file with all the others used in joining replaced by COBRA sequences excepting self_circular ones
