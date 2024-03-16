@@ -1800,7 +1800,9 @@ def main(
         )
     }
     failed_groups: dict[int, Literal["conflict", "circular_6", "nolink"]] = {
-        i: q for q, f in failed_joins.items() for i in f.values()
+        i: q  # type: ignore [misc]
+        for q in reversed(("conflict", "circular_6", "nolink"))
+        for i in failed_joins[q].values()  # type: ignore [index]
     }
     checked_strict = {
         j: v[0]
@@ -1954,101 +1956,6 @@ def main(
     log_info(
         'Getting the joining details of unique "extended_circular" and "extended_partial" query contigs.'
     )
-    joining_detail_headers = [
-        *("Final_Seq_ID", "Joined_Len", "Status"),
-        *("Joined_Seq_ID", "Direction", "Joined_Seq_Len"),
-        *("Start", "End", "Joined_Seq_Cov", "Joined_Seq_GC", "Joined_reason"),
-    ]
-    contig2join_details: dict[
-        str,
-        list[
-            tuple[
-                str,
-                int,
-                Literal["Circular", "Partial"],
-                str,
-                Literal["forward", "reverse"],
-                int,
-                int,
-                int,
-                float,
-                float,
-                str,
-            ]
-        ],
-    ] = {}
-    for query in tqdm(
-        checked_strict_rep,
-        desc="Getting the joining details of extended query contigs.",
-    ):
-        site = 1
-        query_extend_id = f"{query}_{query2extension[query][1]}"
-        if query in path_circular:
-            contig2join_details[query_extend_id] = []
-            query_values: tuple[str, int, Literal["Circular", "Partial"]] = (
-                query_extend_id,
-                len(query2extension[query][0]) - query2extension[query][2],
-                "Circular",
-            )
-            for item in query2path[query]:
-                contig = contig_name(item)
-                if (direction := get_direction(item)) == "forward":
-                    contig_start_end: tuple[str, int, int] = (
-                        contig,
-                        site,
-                        site + header2len[contig] - 1,
-                    )
-                else:
-                    contig_start_end = (
-                        f"{contig}_rc",
-                        site,
-                        site + header2len[contig] - 1,
-                    )
-                contig2join_details[query_extend_id].append(
-                    (
-                        *query_values,
-                        contig_start_end[0],
-                        direction,
-                        header2len[contig],
-                        contig_start_end[1],
-                        contig_start_end[2],
-                        cov[contig],
-                        round(GC(header2seq[contig]), 3),
-                        contig2join_reason[query][contig],
-                    )
-                )
-                site += header2len[contig] - maxk_length
-        else:
-            contig2join_details[query_extend_id] = []
-            query_values = (
-                query_extend_id,
-                len(query2extension[query][0]) - query2extension[query][2],
-                "Partial",
-            )
-            for item in query2path[query]:
-                contig = contig_name(item)
-                if (direction := get_direction(item)) == "forward":
-                    contig_start_end = (contig, site, site + header2len[contig] - 1)
-                else:
-                    contig_start_end = (
-                        f"{contig}_rc",
-                        site,
-                        site + header2len[contig] - 1,
-                    )
-                contig2join_details[query_extend_id].append(
-                    (
-                        *query_values,
-                        contig_start_end[0],
-                        direction,
-                        header2len[contig],
-                        *contig_start_end[1:],
-                        cov[contig],
-                        round(GC(header2seq[contig]), 3),
-                        contig2join_reason[query][contig],
-                    )
-                )
-                site += header2len[contig] - maxk_length
-
     with (
         open(
             f"{working_dir}/COBRA_category_ii-a_extended_circular_unique_joining_details.txt",
@@ -2059,9 +1966,64 @@ def main(
             "w",
         ) as detail_partial,
     ):
+        joining_detail_headers = [
+            *("Final_Seq_ID", "Joined_Len", "Status"),
+            *("Joined_Seq_ID", "Direction", "Joined_Seq_Len"),
+            *("Start", "End", "Joined_Seq_Cov", "Joined_Seq_GC", "Joined_reason"),
+        ]
+        contig2join_details: dict[
+            str,
+            list[
+                tuple[
+                    str,
+                    int,
+                    Literal["Circular", "Partial"],
+                    str,
+                    Literal["forward", "reverse"],
+                    int,
+                    int,
+                    int,
+                    float,
+                    float,
+                    str,
+                ]
+            ],
+        ] = {}
+        for query in tqdm(
+            checked_strict_rep,
+            desc="Getting the joining details of extended query contigs.",
+        ):
+            site = 1
+            query_extend_id = f"{query}_{query2extension[query][1]}"
+            contig2join_details[query_extend_id] = []
+            query_values: tuple[str, int, Literal["Circular", "Partial"]] = (
+                query_extend_id,
+                len(query2extension[query][0]) - query2extension[query][2],
+                "Circular" if query in path_circular else "Partial",
+            )
+            for item in query2path[query]:
+                contig = contig_name(item)
+                if (direction := get_direction(item)) == "forward":
+                    contig_start_end = (site, site + header2len[contig] - 1)
+                else:
+                    contig_start_end = (site, site + header2len[contig] - 1)
+                contig2join_details[query_extend_id].append(
+                    (
+                        *query_values,
+                        contig,
+                        direction,
+                        header2len[contig],
+                        *contig_start_end,
+                        cov[contig],
+                        round(GC(header2seq[contig]), 3),
+                        contig2join_reason[query][contig],
+                    )
+                )
+                site += header2len[contig] - maxk_length
+
         print(*joining_detail_headers, sep="\t", file=detail_circular)
         print(*joining_detail_headers, sep="\t", file=detail_partial)
-        for seq in contig2join_details.keys():
+        for seq in sorted(contig2join_details):
             for detail_values in contig2join_details[seq]:
                 print(
                     *detail_values,
