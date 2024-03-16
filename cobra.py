@@ -126,13 +126,41 @@ def parse_args():
 
 
 # define functions for analyses
-def log_info(step: str, description: str, log_file: TextIO, line_feed="\n"):
-    print(
-        step + strftime("[%Y/%m/%d %H:%M:%S]") + description,
-        end=line_feed,
-        file=log_file,
-        flush=True,
-    )
+def get_log_info(steps: int, log_file: TextIO | None = None):
+    step = [0]
+    step_format_str = "[{0:0>" + f"{len(str(steps))}" + "}/" + f"{steps}"
+
+    def steps_range():
+        while True:
+            step[0] += 1
+            yield step_format_str.format(step[0])
+
+    stepin = iter(tqdm(steps_range(), desc="COBRA Steps", total=steps))
+
+    def _log_info(description: str, end="\n"):
+        print(
+            next(stepin) + " " + strftime("[%Y/%m/%d %H:%M:%S]") + description,
+            end=end,
+            file=log_file,
+            flush=True,
+        )
+
+    return _log_info
+
+
+def compre_sets(p: int, li: set, lj: set):
+    if p < 0:
+        return ""
+    if p == 0:
+        return f"{len(li)}"
+    i, j, ij = len(li), len(lj), len(li & lj)
+    if i == j:
+        return f"=="
+    if i == ij:
+        return ">"
+    if j == ij:
+        return "<"
+    return f"{ij}"
 
 
 def contig_name(end_name: str):
@@ -579,7 +607,7 @@ def summary_fasta(
     length: int,
     cov: dict[str, float],
     self_circular: frozenset[str],
-    self_circular_non_expected_overlap: dict[str, int],
+    self_circular_flexible_overlap: dict[str, int],
 ):
     """
     summary basic information of a fasta file
@@ -606,11 +634,9 @@ def summary_fasta(
                 if header.split("_self")[0] in self_circular:
                     sequence_stats.append(str(length))
                 else:
-                    # header.split("_self")[0] in self_circular_non_expected_overlap:
+                    # header.split("_self")[0] in self_circular_flexible_overlap:
                     sequence_stats.append(
-                        str(
-                            self_circular_non_expected_overlap[header.split("_self")[0]]
-                        )
+                        str(self_circular_flexible_overlap[header.split("_self")[0]])
                     )
             else:
                 sequence_stats[2] = str(cov[header.split("_extended")[0]])
@@ -814,6 +840,11 @@ def get_parsed_linkage(
     orphan_end_query: frozenset[str],
     linkage_mismatch: int,
 ):
+    """
+    parsed_linkage: paired linkage supported by bam file
+    parsed_contig_spanned_by_PE_reads: contig spanned by paired-end reads
+    """
+    # Initialize a defaultdict to store linked contigs
     parsed_linkage: set[tuple[str, str]] = set()
     linkage: dict[str, set[str]] = defaultdict(set)
     # Initialize a dictionary to store paired-end reads spanning contigs
@@ -1490,6 +1521,7 @@ def main(
 
     # write input files information to log file
     log = open(f"{working_dir}/log", "w")  # log file
+    log_info = get_log_info(17, log)
     print(
         "1. INPUT INFORMATION",
         "# Assembler: "
@@ -1513,23 +1545,16 @@ def main(
 
     ##
     # import the whole contigs and save their end sequences
-    log_info(
-        "[01/23]", "Reading contigs and getting the contig end sequences. ", log, ""
-    )
-    # header2seq = {}
-    # header2len = {}
-    # link_pair = {}
+    log_info("Reading contigs and getting the contig end pairs.", " ")
     header2seq, header2len, link_pair = get_link_pair(
         assem_fa=assem_fa, maxk_length=maxk_length
     )
-    log_info("[02/23]", "Getting shared contig ends.", log)
     print(f"A total of {len(header2seq)} contigs were imported.", file=log, flush=True)
 
     ##
     # save all paired links to a file
-    log_info("[03/23]", "Writing contig end joining pairs.", log)
-
-    (one_path_end, two_paths_end) = check_Y_paths(
+    log_info("Joining contigs by contig end (maxK)")
+    one_path_end, two_paths_end = check_Y_paths(
         link_pair=link_pair, logfile=f"{working_dir}/COBRA_end_joining_pairs.txt"
     )
     print(
@@ -1541,7 +1566,7 @@ def main(
     )
     ##
     # read and save the coverage of all contigs
-    log_info("[04/23]", "Getting contig coverage information.", log)
+    log_info("Reading contig coverage information.")
     cov = get_cov(coverage_file)
     if len(cov) < len(header2seq):
         raise ValueError(
@@ -1550,10 +1575,8 @@ def main(
 
     ##
     # open the query file and save the information
-
-    log_info("[05/23]", "Getting query contig list. ", log, "")
+    log_info("Getting query contig list.", " ")
     query_set = get_query_set(f"{query_fa}", uniset=header2seq)
-
     # distinguish orphan_end_query and non_orphan_end_query:
     orphan_end_query_1 = frozenset(
         header
@@ -1561,8 +1584,6 @@ def main(
         if header + "_L" not in link_pair.keys()
         and header + "_R" not in link_pair.keys()
     )
-
-    #
     print(
         f"A total of {len(query_set)} query contigs were imported, "
         f"with {len(orphan_end_query_1)} query with unique end (orphan).",
@@ -1572,12 +1593,7 @@ def main(
 
     ##
     # get the linkage of contigs based on paired-end reads mapping
-    log_info(
-        "[06/23]",
-        "Getting contig linkage based on sam/bam. Be patient, this may take long.",
-        log,
-    )
-    # Initialize a defaultdict to store linked contigs
+    log_info("Getting linkage based on sam/bam. Be patient, this may take long.")
     parsed_linkage, parsed_contig_spanned_by_PE_reads = get_parsed_linkage(
         mapping_file,
         trim_readno=trim_readno,
@@ -1585,13 +1601,13 @@ def main(
         orphan_end_query=orphan_end_query_1,
         linkage_mismatch=linkage_mismatch,
     )
-    ###########################################################################
-    ## Now all file are already loaded.                                      ##
-    ###########################################################################
-    log_info("[07/23]", "Parsing the linkage information.", log)
-    ##
-    log_info("[08/23]", "Detecting self_circular contigs. ", log)
 
+    ############################################################################
+    ## Now all file are already loaded.                                       ##
+    ############################################################################
+    debug = open(f"{working_dir}/debug.txt", "w")
+
+    log_info("Detecting self_circular contigs, independent of mapping linkage")
     self_circular = frozenset(
         contig
         for contig in tqdm(query_set, desc="Detecting self_circular contigs.")
@@ -1602,7 +1618,6 @@ def main(
             link_pair=link_pair,
         )
     )
-    debug = open(f"{working_dir}/debug.txt", "w")
 
     # for debug
     print(f"# self_circular: {len(self_circular)}", file=debug, flush=True)
@@ -1612,25 +1627,24 @@ def main(
     # determine potential self_circular contigs from contigs with orphan end
     min_over_len = mink - 1 if assembler == "idba" else mink
     # determine if there is DTR for those query with orphan ends, if yes, assign as self_circular as well
-    self_circular_non_expected_overlap = {
+    self_circular_flexible_overlap = {
         contig: l
         for contig in parsed_contig_spanned_by_PE_reads
         if (l := check_self_circular_soft(header2seq[contig], min_over_len)) > 0
     }
-    orphan_end_query = orphan_end_query_1 - self_circular_non_expected_overlap.keys()
+    orphan_end_query = orphan_end_query_1 - self_circular_flexible_overlap.keys()
 
     # debug
     print(
-        f"# self_circular_non_expected_overlap: {len(self_circular_non_expected_overlap)}",
+        f"# self_circular_flexible_overlap: {len(self_circular_flexible_overlap)}",
         file=debug,
         flush=True,
     )
-    print(sorted(self_circular_non_expected_overlap), file=debug, flush=True)
+    print(sorted(self_circular_flexible_overlap), file=debug, flush=True)
 
     ##
     # walk the joins
-    log_info("[09/23]", "Detecting joins of contigs. ", log)
-
+    log_info("Detecting joins of contigs. ")
     contig2join, contig2join_reason, path_circular_end = get_contig2join(
         query_set=query_set,
         orphan_end_query=frozenset(orphan_end_query),
@@ -1644,10 +1658,10 @@ def main(
     path_circular = frozenset(contig_name(i) for i in path_circular_end)
     print("# path_circular", file=debug, flush=True)
     print(sorted(path_circular), file=debug, flush=True)
+
     ##
     # save the potential joining paths
-    log_info("[10/23]", "Saving potential joining paths.", log)
-
+    log_info("Saving potential joining paths.")
     with open(f"{working_dir}/COBRA_potential_joining_paths.txt", "w") as results:
         for item in sorted(contig2join):
             if contig_name(item) in self_circular:
@@ -1676,14 +1690,16 @@ def main(
 
     ##
     # get the joining paths
-    log_info("[11/23]", "Checking for invalid joining: sharing queries.", log)
+    log_info("Getting the joining paths of contigs.")
     contig2assembly = get_contig2assembly(contig2join, path_circular_end)
     # for debug
     print("# contig2assembly", file=debug, flush=True)
     for k in sorted(contig2assembly):
         print(k, sorted(contig2assembly[k]), file=debug, flush=True)
 
-    order_all = {
+    #
+    # get the joining order of contigs, seems to be super of `contig2assembly`
+    query2path = {
         query: join_seqs(
             query,
             contig2join=contig2join,
@@ -1691,18 +1707,24 @@ def main(
         )
         for query in contig2assembly
     }
+
+    ##
+    log_info("Getting joined seqeuences.")
     # query: seq, mark, len of overlap
     query2extension = {
         query: (
             extend_query(
-                order_all[query], header2seq=header2seq, maxk_length=maxk_length
+                query2path[query], header2seq=header2seq, maxk_length=maxk_length
             ),
             "extended_circular" if query in path_circular else "extended_partial",
             maxk_length if query in path_circular else 0,
         )
         for query in tqdm(contig2assembly, desc="Extending path of query")
     }
-    # blast_half_file = f"{working_dir}/blast_pairs.tsv"
+
+    ##
+    # Similar direct terminal repeats may lead to invalid joins
+    log_info("Checking for invalid joining using BLASTn: close strains.")
     blast_half_file = run_blast_half(
         (
             i
@@ -1715,11 +1737,11 @@ def main(
                     (contig, header2seq[contig], overlap)
                     for single_circle in (
                         self_circular,
-                        self_circular_non_expected_overlap,
+                        self_circular_flexible_overlap,
                     )
                     for contig in single_circle
                     for overlap in (
-                        self_circular_non_expected_overlap.get(contig, maxk_length),
+                        self_circular_flexible_overlap.get(contig, maxk_length),
                     )
                 ),
             )
@@ -1729,13 +1751,19 @@ def main(
         threads=threads,
         n=100,
     )
+    # blast_half_file = f"{working_dir}/blast_pairs.tsv"
     failed_blast_half = get_failed_blast_half(blast_half_file)
+    # for debug
+    print("# failed_blast_half", file=debug, flush=True)
+    print(sorted(failed_blast_half), file=debug, flush=True)
+    debug.close()
 
     query2stat = {
         k: QueryCovVar.query(v, cov=cov, header2len=header2len)
         for k, v in tqdm(contig2assembly.items(), "stat query length and coverage")
     }
 
+    log_info("Grouping paths by sharing queries to check for invalid queries.")
     query2groups = dict(
         enumerate(
             get_query2groups(contig2assembly=contig2assembly, query_set=query_set)
@@ -1747,14 +1775,17 @@ def main(
         path_circular=path_circular,
         failed_join_potential=failed_join_potential,
     )
+    # for debug
     with open(f"{working_dir}/COBRA_check_assembly_reason.tsv", "w") as results:
         print("group", "reason", "query", "dups", sep="\t", file=results)
         for item in sorted(
             check_assembly_reason.items(), key=lambda x: (x[1][0], x[0])
         ):
             print(*item[1][:2], item[0], *item[1][2:], sep="\t", file=results)
-    failed_joins = {
-        l: {
+
+    log_info("Filtering paths accoring to COBRA rules.")
+    failed_joins: dict[Literal["conflict", "circular_6", "nolink"], dict[str, int]] = {
+        l: {  # type: ignore [misc]
             j: v[0]
             for v in check_assembly_reason.values()
             if v[1] == v1
@@ -1768,7 +1799,9 @@ def main(
             ("nolink", "nolink_query"),
         )
     }
-    failed_groups = frozenset(i for f in failed_joins.values() for i in f.values())
+    failed_groups: dict[int, Literal["conflict", "circular_6", "nolink"]] = {
+        i: q for q, f in failed_joins.items() for i in f.values()
+    }
     checked_strict = {
         j: v[0]
         for k, v in check_assembly_reason.items()
@@ -1776,12 +1809,7 @@ def main(
         for j in contig2assembly[k] & contig2assembly.keys()
     }
     failed_join_list = frozenset(i for f in failed_joins.values() for i in f.keys())
-    redundant_circular_8 = {
-        i: check_assembly_reason[i]
-        for i in checked_strict.keys()
-        if i in check_assembly_reason
-        and check_assembly_reason[i][1] == "circular_8_tight"
-    }
+
     assembly_rep = {
         max(v[3], key=lambda x: query2stat[x].seq_len) if len(v[3]) else i: v[0]
         for i, v in check_assembly_reason.items()
@@ -1794,19 +1822,56 @@ def main(
         if j in assembly_rep and j not in failed_blast_half
     }
 
+    redundant_circular_8 = {
+        i: check_assembly_reason[i]
+        for i in checked_strict.keys()
+        if i in check_assembly_reason
+        and check_assembly_reason[i][1] == "circular_8_tight"
+    }
+    print(
+        *(
+            "\t".join(
+                [
+                    *(compre_sets(pi - pj, li, lj) for pj, (j, lj) in enumerate(ll)),
+                    f"{i}",
+                ]
+            )
+            for ll in [
+                [
+                    ("query_set", query_set),
+                    ("orphan_end_query", orphan_end_query),
+                    (
+                        "self_circular_flexible_overlap",
+                        self_circular_flexible_overlap.keys(),
+                    ),
+                    ("self_circular", self_circular),
+                    ("failed_join_potential", failed_join_potential),
+                    ("failed_join_nolink", failed_joins["nolink"].keys()),
+                    ("failed_join_conflict", failed_joins["conflict"].keys()),
+                    ("failed_join_circular_6", failed_joins["circular_6"].keys()),
+                    ("path_circular", path_circular),
+                    ("checked_strict", checked_strict.keys()),
+                    ("checked_strict_rep", checked_strict_rep.keys()),
+                    ("assembly_rep", assembly_rep.keys()),
+                    ("redundant_circular_8", redundant_circular_8.keys()),
+                    ("failed_blast_half", failed_blast_half),
+                ]
+            ]
+            for pi, (i, li) in enumerate(ll)
+        ),
+        sep="\n",
+        file=log,
+    )
+
     def check_check_assembly_reason():
-        non_orphan_end_query = query_set - orphan_end_query_1
-        assert non_orphan_end_query == (
-            self_circular
-            | failed_join_potential
-            | failed_join_list
-            | checked_strict.keys()
+        assert query_set - orphan_end_query_1 == (
+            query_set | failed_join_potential | failed_join_list | checked_strict.keys()
         )
         assert not checked_strict.keys() & failed_join_potential
         assert not checked_strict.keys() & failed_joins["nolink"].keys()
         assert not checked_strict.keys() & failed_joins["conflict"].keys()
         assert not checked_strict.keys() & failed_joins["circular_6"].keys()
-        assert not self_circular & self_circular_non_expected_overlap.keys()
+        assert not self_circular & self_circular_flexible_overlap.keys()
         assert not any(
             {
                 query
@@ -1814,58 +1879,6 @@ def main(
                 for contig in contig2assembly[query]
                 if contig in failed_join_list
             }
-        )
-
-        def compre_sets(p: int, li: set, lj: set):
-            if p < 0:
-                return ""
-            if p == 0:
-                return f"{len(li)}"
-            i, j, ij = len(li), len(lj), len(li & lj)
-            if i == j:
-                return f"=="
-            if i == ij:
-                return ">"
-            if j == ij:
-                return "<"
-            return f"{ij}"
-
-        print(
-            *(
-                "\t".join(
-                    [
-                        *(
-                            compre_sets(pi - pj, li, lj)
-                            for pj, (j, lj) in enumerate(ll)
-                        ),
-                        f"{i}",
-                    ]
-                )
-                for ll in [
-                    [
-                        ("query_set", query_set),
-                        ("orphan_end_query", orphan_end_query),
-                        (
-                            "self_circular_non_expected_overlap",
-                            self_circular_non_expected_overlap.keys(),
-                        ),
-                        ("self_circular", self_circular),
-                        ("non_orphan_end_query", non_orphan_end_query),
-                        ("failed_join_potential", failed_join_potential),
-                        ("failed_join_nolink", failed_joins["nolink"].keys()),
-                        ("failed_join_conflict", failed_joins["conflict"].keys()),
-                        ("failed_join_circular_6", failed_joins["circular_6"].keys()),
-                        ("path_circular", path_circular),
-                        ("checked_strict", checked_strict.keys()),
-                        ("checked_strict_rep", checked_strict_rep.keys()),
-                        ("assembly_rep", assembly_rep.keys()),
-                        ("redundant_circular_8", redundant_circular_8.keys()),
-                        ("failed_blast_half", failed_blast_half),
-                    ]
-                ]
-                for pi, (i, li) in enumerate(ll)
-            ),
-            sep="\n",
         )
 
         def check_query(query: str):
@@ -1895,56 +1908,27 @@ def main(
 
         check_query("k141_10804945")
 
-    #
-    # TODO: Later, only keep the longest aval contigs
-    # get the joining order of contigs
-    log_info("[14/23]", "Getting the joining order of contigs.", log)
-
-    ##
-    # get retrieved sequences
-    log_info("[15/23]", "Getting retrieved contigs.", log)
-
-    # for debug
-    print("# retrieved order_all", file=debug, flush=True)
-
-    ##
-    # writing joined sequences
-    log_info("[16/23]", "Saving joined seqeuences.", log)
-
     # make blastn database and run search if the database is not empty
     if (
         (not checked_strict_rep)
         and (not self_circular)
-        and (not self_circular_non_expected_overlap)
+        and (not self_circular_flexible_overlap)
     ):
         # Of course we assume that sequence is not empty!
         print(
-            "no query was extended, exit! this is normal if you only provide few queries.",
+            "no query was extended by COBRA, exit! "
+            "this is normal if you only provide few queries.",
             file=log,
             flush=True,
         )
         exit()
-    ##
-    # Similar direct terminal repeats may lead to invalid joins
+
+    ############################################################################
+    ## Now output paths                                                       ##
+    ############################################################################
     log_info(
-        "[17/23]",
-        "Checking for invalid joining using BLASTn: close strains.",
-        log,
+        "Saving extended_circular and extended_partial sequences for joining checking."
     )
-
-    # for debug
-    print("# failed_blast_half", file=debug, flush=True)
-    print(failed_blast_half, file=debug, flush=True)
-
-    ##
-    # get the unique sequences of COBRA "Extended" query contigs for joining check
-    log_info(
-        "[18/23]",
-        'Saving unique sequences of "Extended_circular" and "Extended_partial" for joining checking.',
-        log,
-    )
-
-    query2current = {}
     with (
         open(
             f"{working_dir}/COBRA_category_ii-a_extended_circular_unique.fa", "w"
@@ -1964,25 +1948,11 @@ def main(
                 ),
                 flush=True,
             )
-            for item in order_all[query]:
-                if contig_name(item) in query_set:
-                    query2current[contig_name(item)] = (
-                        f"{query}_{query2extension[query][1]}"
-                    )
-
-    # for debug
-    print("query2current", file=debug, flush=True)
-    print(query2current, file=debug, flush=True)
-    debug.close()
-
-    # next we can select the best results for everything in
 
     ##
     # save the joining details information
     log_info(
-        "[19/23]",
-        'Getting the joining details of unique "Extended_circular" and "Extended_partial" query contigs.',
-        log,
+        'Getting the joining details of unique "extended_circular" and "extended_partial" query contigs.'
     )
     joining_detail_headers = [
         *("Final_Seq_ID", "Joined_Len", "Status"),
@@ -2020,7 +1990,7 @@ def main(
                 len(query2extension[query][0]) - query2extension[query][2],
                 "Circular",
             )
-            for item in order_all[query]:
+            for item in query2path[query]:
                 contig = contig_name(item)
                 if (direction := get_direction(item)) == "forward":
                     contig_start_end: tuple[str, int, int] = (
@@ -2055,7 +2025,7 @@ def main(
                 len(query2extension[query][0]) - query2extension[query][2],
                 "Partial",
             )
-            for item in order_all[query]:
+            for item in query2path[query]:
                 contig = contig_name(item)
                 if (direction := get_direction(item)) == "forward":
                     contig_start_end = (contig, site, site + header2len[contig] - 1)
@@ -2102,9 +2072,7 @@ def main(
     ##
     # save the joining summary information
     log_info(
-        "[20/23]",
-        'Saving joining summary of "Extended_circular" and "Extended_partial" query contigs.',
-        log,
+        'Saving joining summary of "extended_circular" and "extended_partial" query contigs.'
     )
 
     with open(f"{working_dir}/COBRA_joining_summary.txt", "w") as assembly_summary:
@@ -2122,7 +2090,7 @@ def main(
                     contig,
                     header2len[contig],
                     query2stat[query].query_count,
-                    ",".join(seqjoin2contig(order_all[query])),
+                    ",".join(seqjoin2contig(query2path[query])),
                     query2stat[query].seq_len,
                     d,
                     d - header2len[contig],
@@ -2134,7 +2102,7 @@ def main(
 
     ##
     # save the joining status information of each query
-    log_info("[21/23]", "Saving joining status of all query contigs.", log)
+    log_info("Saving joining status of all query contigs.")
     assembled_info = open(
         f"{working_dir}/COBRA_joining_status.txt", "w"
     )  # shows the COBRA status of each query
@@ -2211,7 +2179,7 @@ def main(
             )
 
     # for self circular
-    log_info("[22/23]", "Saving self_circular contigs.", log)
+    log_info("Saving self_circular contigs.")
     with open(
         f"{working_dir}/COBRA_category_i_self_circular.fa", "w"
     ) as circular_fasta:
@@ -2229,12 +2197,12 @@ def main(
                 sep="\t",
                 file=assembled_info,
             )
-        for query in sorted(self_circular_non_expected_overlap):
+        for query in sorted(self_circular_flexible_overlap):
             query_counts[label] += 1
             print(f">{query}_self_circular\n{header2seq[query]}\n", file=circular_fasta)
             print(
                 query,
-                header2len[query] - self_circular_non_expected_overlap[query],
+                header2len[query] - self_circular_flexible_overlap[query],
                 cov[query],
                 round(GC(header2seq[contig_name(query)]), 3),
                 label,
@@ -2256,12 +2224,12 @@ def main(
             maxk_length,
             cov=cov,
             self_circular=self_circular,
-            self_circular_non_expected_overlap=self_circular_non_expected_overlap,
+            self_circular_flexible_overlap=self_circular_flexible_overlap,
         )
 
     ##
     # save new fasta file with all the others used in joining replaced by COBRA sequences excepting self_circular ones
-    log_info("[23/23]", "Saving the new fasta file.", log)
+    log_info("Saving the new fasta file.")
 
     query_extension_used = {
         contig: query
@@ -2283,13 +2251,13 @@ def main(
         "",
         "3. RESULTS SUMMARY",
         f"# Total queries: {len(query_set)}",
-        f"# Category i   - Self_circular: {query_counts['self_circular']}",
-        f"# Category ii  - Extended_circular: {query_counts['extended_circular']} (Unique: {len(checked_strict_rep.keys() & path_circular)})",
-        f"# Category ii  - Extended_partial: {query_counts['extended_partial']} (Unique: {len(checked_strict_rep.keys() - path_circular)})",
-        f"# Category ii  - Extended_failed (due to COBRA rules): {query_counts['extended_failed']}",
-        f"# Category iii - Orphan end: {query_counts['orphan_end']}",
+        f"# Category i   - self_circular: {query_counts['self_circular']}",
+        f"# Category ii  - extended_circular: {query_counts['extended_circular']} (Unique: {len(checked_strict_rep.keys() & path_circular)})",
+        f"# Category ii  - extended_partial: {query_counts['extended_partial']} (Unique: {len(checked_strict_rep.keys() - path_circular)})",
+        f"# Category ii  - extended_failed (due to COBRA rules): {query_counts['extended_failed']}",
+        f"# Category iii - orphan end: {query_counts['orphan_end']}",
         '# Check "COBRA_joining_status.txt" for joining status of each query.',
-        '# Check "COBRA_joining_summary.txt" for joining details of "Extended_circular" and "Extended_partial" queries.',
+        '# Check "COBRA_joining_summary.txt" for joining details of "extended_circular" and "extended_partial" queries.',
         file=log,
         flush=True,
     )
