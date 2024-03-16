@@ -574,21 +574,6 @@ def seqjoin2contig(seqjoin: Iterable[str]):
             used_queries.add(contig)
 
 
-def retrieve(contig: str, order_all: dict[str, list[str]], header2seq: dict[str, Seq]):
-    """
-    to retrieve and save all the contigs in the joining path of a query
-    """
-    with open(
-        "COBRA_retrieved_for_joining/{0}_retrieved.fa".format(contig), "w"
-    ) as out:
-        added: set[str] = set()
-        for item in order_all[contig]:
-            if contig_name(item) not in added:
-                out.write(">" + contig_name(item) + "\n")
-                out.write(header2seq[contig_name(item)] + "\n")
-                added.add(contig_name(item))
-
-
 def count_seq(fasta_file: str):
     """
     calculate the number of seqs in a fasta file
@@ -1286,8 +1271,6 @@ def get_assembly2reason(
             while subsets:
                 # start from the shortest path
                 this = subsets.pop(0)
-                if this == "k141_7416882":
-                    break
                 this_feature: dict[
                     Literal[
                         "has_disjoint_found",
@@ -1512,8 +1495,6 @@ def main(
     ##
     # get information from the input files and parameters and save information
     # get the name of the whole contigs fasta file
-    fasta_name = f"{assem_fa}".rsplit("/", 1)[1] if "/" in assem_fa else f"{assem_fa}"
-
     # folder of output
     if outdir:
         working_dir = f"{outdir}"
@@ -1535,29 +1516,26 @@ def main(
 
     # write input files information to log file
     log = open(f"{working_dir}/log", "w")  # log file
-    log.write("1. INPUT INFORMATION" + "\n")
-    log.write(
-        "\n".join(
-            [
-                "# Assembler: "
-                + {"idba": "IDBA_UD", "metaspades": "metaSPAdes", "megahit": "MEGAHIT"}[
-                    assembler
-                ],
-                f"# Min-kmer: {mink}",
-                f"# Max-kmer: {maxk}",
-                f"# Overlap length: {maxk_length} bp",
-                f"# Read mapping max mismatches for contig linkage: {linkage_mismatch}",
-                "# Query contigs: " + os.path.abspath(query_fa),
-                "# Whole contig set: " + os.path.abspath(assem_fa),
-                "# Mapping file: " + os.path.abspath(mapping_file),
-                "# Coverage file: " + os.path.abspath(coverage_file),
-                "# Output folder: " + os.path.abspath(working_dir),
-                "\n",
-            ]
-        )
+    print(
+        "1. INPUT INFORMATION",
+        "# Assembler: "
+        + {"idba": "IDBA_UD", "metaspades": "metaSPAdes", "megahit": "MEGAHIT"}[
+            assembler
+        ],
+        f"# Min-kmer: {mink}",
+        f"# Max-kmer: {maxk}",
+        f"# Overlap length: {maxk_length} bp",
+        f"# Read mapping max mismatches for contig linkage: {linkage_mismatch}",
+        f"# Query contigs: {os.path.abspath(query_fa)}",
+        f"# Whole contig set: {os.path.abspath(assem_fa)}",
+        f"# Mapping file: {os.path.abspath(mapping_file)}",
+        f"# Coverage file: {os.path.abspath(coverage_file)}",
+        f"# Output folder: {os.path.abspath(working_dir)}",
+        "\n",
+        "2. PROCESSING STEPS",
+        file=log,
+        flush=True,
     )
-    log.write("2. PROCESSING STEPS" + "\n")
-    log.flush()
 
     ##
     # import the whole contigs and save their end sequences
@@ -1571,7 +1549,7 @@ def main(
         assem_fa=assem_fa, maxk_length=maxk_length
     )
     log_info("[02/23]", "Getting shared contig ends.", log)
-    log.write(f"A total of {len(header2seq)} contigs were imported.\n")
+    print(f"A total of {len(header2seq)} contigs were imported.", file=log, flush=True)
 
     ##
     # save all paired links to a file
@@ -1580,10 +1558,12 @@ def main(
     (one_path_end, two_paths_end) = check_Y_paths(
         link_pair=link_pair, logfile=f"{working_dir}/COBRA_end_joining_pairs.txt"
     )
-    log.write(
+    print(
         f"Among {len(link_pair)} link pairs, found"
         f" {len(one_path_end)} one path end,"
-        f" {len(two_paths_end)} two paths end.\n"
+        f" {len(two_paths_end)} two paths end.",
+        file=log,
+        flush=True,
     )
     ##
     # read and save the coverage of all contigs
@@ -1610,11 +1590,12 @@ def main(
     non_orphan_end_query = query_set - orphan_end_query
 
     #
-    log.write(
+    print(
         f"A total of {len(query_set)} query contigs were imported, "
-        f"with {len(orphan_end_query)} orphan end query.\n"
+        f"with {len(orphan_end_query)} orphan end query.",
+        file=log,
+        flush=True,
     )
-    log.flush()
 
     ##
     # get the linkage of contigs based on paired-end reads mapping
@@ -1938,17 +1919,9 @@ def main(
     ##
     # get retrieved sequences
     log_info("[15/23]", "Getting retrieved contigs.", log)
-    os.mkdir(f"{working_dir}/COBRA_retrieved_for_joining")
 
     # for debug
     print("# retrieved order_all", file=debug, flush=True)
-    for query in sorted(order_all):
-        with open(
-            f"{working_dir}/COBRA_retrieved_for_joining/{query}_retrieved.fa", "w"
-        ) as out:
-            for item in seqjoin2contig(order_all[query]):
-                print(f">{item}\n{header2seq[item]}", file=out)
-        print(order_all[query], file=debug, flush=True)
 
     ##
     # writing joined sequences
@@ -1963,12 +1936,6 @@ def main(
         header2joined_seq[contig_label] = extend_query(
             order_all[query], header2seq=header2seq, maxk_length=maxk_length
         )
-        with open(
-            f"{working_dir}/COBRA_retrieved_for_joining/{query}_retrieved_joined.fa",
-            "w",
-        ) as a:
-            # print header regarding the joining status
-            print(f">{contig_label}\n{header2joined_seq[contig_label]}", file=a)
 
     print("contig2extended_status", file=debug, flush=True)
     print(contig2extended_status, file=debug, flush=True)
@@ -2018,26 +1985,35 @@ def main(
         ) as extended_partial_fasta,
     ):
         for query in checked_strict_rep:
-            if query in path_circular:
-                print(
-                    f">{query}_{query2extension[query][1]}\n{query2extension[query][0]}\n",
-                    file=extended_circular_fasta,
-                    flush=True,
-                )
-                for item in order_all[query]:
-                    if contig_name(item) in query_set:
-                        query2current[contig_name(item)] = query + "_extended_circular"
-            else:
-                print(
-                    f">{query}_{query2extension[query][1]}\n{query2extension[query][0]}\n",
-                    file=extended_partial_fasta,
-                    flush=True,
-                )
-                for item in order_all[query]:
-                    if contig_name(item) in query_set:
-                        if contig_name(item) in failed_join_list:
-                            raise RuntimeError("Impossible")
-                        query2current[contig_name(item)] = query + "_extended_partial"
+            label = query2extension[query][1]
+            print(
+                f">{query}_{query2extension[query][1]}\n{query2extension[query][0]}\n",
+                file=(
+                    extended_circular_fasta
+                    if label == "extended_circular"
+                    else extended_partial_fasta
+                ),
+                flush=True,
+            )
+            for item in order_all[query]:
+                if contig_name(item) in query_set:
+                    query2current[contig_name(item)] = (
+                        f"{query}_{query2extension[query][1]}"
+                    )
+    summary_fasta(
+        extended_circular_fasta.name,
+        maxk_length,
+        cov=cov,
+        self_circular=self_circular,
+        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
+    )
+    summary_fasta(
+        extended_partial_fasta.name,
+        maxk_length,
+        cov=cov,
+        self_circular=self_circular,
+        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
+    )
 
     # for debug
     print("query2current", file=debug, flush=True)
@@ -2045,22 +2021,6 @@ def main(
     debug.close()
 
     # next we can select the best results for everything in
-    extended_circular_query: set[str] = set()
-    extended_partial_query: set[str] = set()
-    summary_fasta(
-        f"{working_dir}/COBRA_category_ii-a_extended_circular_unique.fasta",
-        maxk_length,
-        cov=cov,
-        self_circular=self_circular,
-        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
-    )
-    summary_fasta(
-        f"{working_dir}/COBRA_category_ii-b_extended_partial_unique.fasta",
-        maxk_length,
-        cov=cov,
-        self_circular=self_circular,
-        self_circular_non_expected_overlap=self_circular_non_expected_overlap,
-    )
 
     ##
     # save the joining details information
@@ -2192,11 +2152,6 @@ def main(
         log,
     )
 
-    query_success = {
-        contig: query
-        for query in checked_strict_rep
-        for contig in contig2assembly[query]
-    }
     with open(f"{working_dir}/COBRA_joining_summary.txt", "w") as assembly_summary:
         print(
             *("Query_Seq_ID", "Query_Seq_Len"),
@@ -2235,50 +2190,55 @@ def main(
     )
 
     # for those could be extended to circular
-    for label in enumerate(("extended_circular", "extended_partial")):
-        for query in sorted(query_success):
-            if query2extension[query_success[query]][1] == label:
-                print(
-                    query,
-                    header2len[query],
-                    cov[query],
-                    round(GC(header2seq[contig_name(query)]), 3),
-                    label[1],
-                    f"category_ii-{'ab'[label[0]]}",
-                    sep="\t",
-                    file=assembled_info,
-                )
+    query_counts = {
+        i: 0
+        for i in (
+            "extended_circular",
+            "extended_partial",
+            "extended_failed",
+            "orphan_end",
+            "self_circular",
+        )
+    }
+    for i, label in enumerate(("extended_circular", "extended_partial")):
+        for query in sorted(checked_strict_rep):
+            if query2extension[query][1] == label:
+                for contig in sorted(contig2assembly[query] & query_set):
+                    query_counts[label] += 1
+                    print(
+                        contig,
+                        header2len[contig],
+                        cov[contig],
+                        round(GC(header2seq[contig_name(contig)]), 3),
+                        label,
+                        f"category_ii-{'ab'[i]}",
+                        sep="\t",
+                        file=assembled_info,
+                    )
 
-    os.chdir(f"{working_dir}")
     # for those cannot be extended
-    failed_join = open("COBRA_category_ii-c_extended_failed.fasta", "w")
-    for query in sorted(failed_join_list):
-        if (
-            query not in extended_circular_query
-            or query not in extended_partial_query
-            or query not in orphan_end_query
-        ):
-            failed_join.write(">" + query + "\n")
-            failed_join.write(header2seq[query] + "\n")
-            assembled_info.write(
-                query
-                + "\t"
-                + str(header2len[query])
-                + "\t"
-                + str(cov[query])
-                + "\t"
-                + str(round(GC(header2seq[contig_name(query)]), 3))
-                + "\t"
-                + "Extended_failed"
-                + "\t"
-                + "category_ii-c"
-                + "\n"
+    with open(
+        f"{working_dir}/COBRA_category_ii-c_extended_failed.fa", "w"
+    ) as failed_join:
+        label = "extended_failed"
+        for query in sorted(failed_join_list):
+            query_counts[label] += 1
+            # assert query not in extended_circular_query
+            # assert query not in extended_partial_query
+            # assert query not in orphan_end_query
+            print(f">{query}\n{header2seq[query]}\n", file=failed_join)
+            print(
+                query,
+                header2len[query],
+                cov[query],
+                round(GC(header2seq[contig_name(query)]), 3),
+                "extended_failed",
+                "category_ii-c",
+                sep="\t",
+                file=assembled_info,
             )
-        else:
-            pass
-    failed_join.close()
     summary_fasta(
-        "COBRA_category_ii-c_extended_failed.fasta",
+        failed_join.name,
         maxk_length,
         cov=cov,
         self_circular=self_circular,
@@ -2286,27 +2246,23 @@ def main(
     )
 
     # for those due to orphan end
-    orphan_end = open("COBRA_category_iii_orphan_end.fasta", "w")
-    for query in orphan_end_query:
-        orphan_end.write(">" + query + "\n")
-        orphan_end.write(header2seq[query] + "\n")
-        assembled_info.write(
-            query
-            + "\t"
-            + str(header2len[query])
-            + "\t"
-            + str(cov[query])
-            + "\t"
-            + str(round(GC(header2seq[contig_name(query)]), 3))
-            + "\t"
-            + "Orphan_end"
-            + "\t"
-            + "category_iii"
-            + "\n"
-        )
-    orphan_end.close()
+    with open(f"{working_dir}/COBRA_category_iii_orphan_end.fa", "w") as orphan_end:
+        label = "orphan_end"
+        for query in sorted(orphan_end_query):
+            query_counts[label] += 1
+            print(f">{query}\n{header2seq[query]}\n", file=orphan_end)
+            print(
+                query,
+                header2len[query],
+                cov[query],
+                round(GC(header2seq[contig_name(query)]), 3),
+                label,
+                "category_iii",
+                sep="\t",
+                file=assembled_info,
+            )
     summary_fasta(
-        "COBRA_category_iii_orphan_end.fasta",
+        orphan_end.name,
         maxk_length,
         cov=cov,
         self_circular=self_circular,
@@ -2315,113 +2271,79 @@ def main(
 
     # for self circular
     log_info("[22/23]", "Saving self_circular contigs.", log)
-    circular_fasta = open("COBRA_category_i_self_circular.fasta", "w")
-
-    for query in self_circular:
-        assembled_info.write(
-            query
-            + "\t"
-            + str(header2len[query] - maxk_length)
-            + "\t"
-            + str(cov[query])
-            + "\t"
-            + str(round(GC(header2seq[contig_name(query)]), 3))
-            + "\t"
-            + "Self_circular"
-            + "\t"
-            + "category_i"
-            + "\n"
-        )
-        circular_fasta.write(">" + query + "_self_circular" + "\n")
-        circular_fasta.write(header2seq[query] + "\n")
-
-    for query in self_circular_non_expected_overlap.keys():
-        assembled_info.write(
-            query
-            + "\t"
-            + str(header2len[query] - self_circular_non_expected_overlap[query])
-            + "\t"
-            + str(cov[query])
-            + "\t"
-            + str(round(GC(header2seq[contig_name(query)]), 3))
-            + "\t"
-            + "Self_circular"
-            + "\t"
-            + "category_i"
-            + "\n"
-        )
-        circular_fasta.write(">" + query + "_self_circular" + "\n")
-        circular_fasta.write(header2seq[query] + "\n")
-
-    circular_fasta.close()
-    assembled_info.close()
+    with open(
+        f"{working_dir}/COBRA_category_i_self_circular.fa", "w"
+    ) as circular_fasta:
+        label = "self_circular"
+        for query in sorted(self_circular):
+            query_counts[label] += 1
+            print(f">{query}_self_circular\n{header2seq[query]}\n", file=circular_fasta)
+            print(
+                query,
+                header2len[query] - maxk_length,
+                cov[query],
+                round(GC(header2seq[contig_name(query)]), 3),
+                label,
+                "category_i",
+                sep="\t",
+                file=assembled_info,
+            )
+        for query in sorted(self_circular_non_expected_overlap):
+            query_counts[label] += 1
+            print(f">{query}_self_circular\n{header2seq[query]}\n", file=circular_fasta)
+            print(
+                query,
+                header2len[query] - self_circular_non_expected_overlap[query],
+                cov[query],
+                round(GC(header2seq[contig_name(query)]), 3),
+                label,
+                "category_i",
+                sep="\t",
+                file=assembled_info,
+            )
     summary_fasta(
-        "COBRA_category_i_self_circular.fasta",
+        circular_fasta.name,
         maxk_length,
         cov=cov,
         self_circular=self_circular,
         self_circular_non_expected_overlap=self_circular_non_expected_overlap,
     )
+    assembled_info.close()
 
     ##
     # save new fasta file with all the others used in joining replaced by COBRA sequences excepting self_circular ones
     log_info("[23/23]", "Saving the new fasta file.", log)
 
-    with open("{0}.new.fa".format(fasta_name.rsplit(".", 1)[0]), "w") as new:
-        for header, sequence in header2seq.items():
-            if header not in query_success:
-                new.write(f">{header}\n{sequence}\n")
-
+    query_extension_used = {
+        contig: query
+        for query in checked_strict_rep
+        for contig in contig2assembly[query]
+    }
+    with open(f"{working_dir}/{assem_fa.rsplit('/', 1)[-1]}.new.fa", "w") as new:
+        for header, sequence in sorted(header2seq.keys() - query_extension_used.keys()):
+            print(f">{header}\n{sequence}\n", file=new)
     os.system(
-        "cat {0}.new.fa COBRA_category_ii-a_extended_circular_unique.fasta "
-        "COBRA_category_ii-b_extended_partial_unique.fasta "
-        ">{0}.new.fa.".format(fasta_name.rsplit(".", 1)[0])
+        f"cat {extended_circular_fasta.name} {extended_partial_fasta.name} > {new.name}"
     )
-    os.system("mv {0}.new.fa. {0}.new.fa".format(fasta_name.rsplit(".", 1)[0]))
-
     ##
     # intermediate files
-    os.mkdir("intermediate.files")
-    os.system(
-        "mv COBRA_end_joining_pairs.txt COBRA_potential_joining_paths.txt COBRA_retrieved_for_joining intermediate.files"
-    )
-    os.mkdir("intermediate.files/invalid.checking")
-    os.system(
-        "mv blastdb_1.fa* blastdb_2.fa blastdb_2.vs.blastdb_1* intermediate.files/invalid.checking"
-    )
 
     ##
     # write the numbers to the log file
-    log.write("\n")
-    log.write("3. RESULTS SUMMARY" + "\n")
-    log.write(
-        "# Total queries: "
-        + str(len(query_set))
-        + "\n"
-        + "# Category i   - Self_circular: "
-        + str(count_seq("COBRA_category_i_self_circular.fasta"))
-        + "\n"
-        + "# Category ii  - Extended_circular: "
-        + str(len(extended_circular_query))
-        + " (Unique: "
-        + str(count_seq("COBRA_category_ii-a_extended_circular_unique.fasta"))
-        + ")\n"
-        + "# Category ii  - Extended_partial: "
-        + str(len(extended_partial_query))
-        + " (Unique: "
-        + str(count_seq("COBRA_category_ii-b_extended_partial_unique.fasta"))
-        + ")\n"
-        + "# Category ii  - Extended_failed (due to COBRA rules): "
-        + str(len(set(failed_join_list)))
-        + "\n"
-        + "# Category iii - Orphan end: "
-        + str(len(orphan_end_query))
-        + "\n"
-        + '# Check "COBRA_joining_status.txt" for joining status of each query.'
-        + "\n"
-        + '# Check "COBRA_joining_summary.txt" for joining details of "Extended_circular" and "Extended_partial" queries.'
+    print(
+        "",
+        "3. RESULTS SUMMARY",
+        f"# Total queries: {len(query_set)}",
+        f"# Category i   - Self_circular: {query_counts['self_circular']}",
+        f"# Category ii  - Extended_circular: {query_counts['extended_circular']} (Unique: {len(checked_strict_rep.keys() & path_circular)})",
+        f"# Category ii  - Extended_partial: {query_counts['extended_partial']} (Unique: {len(checked_strict_rep.keys() - path_circular)})",
+        f"# Category ii  - Extended_failed (due to COBRA rules): {query_counts['extended_failed']}",
+        f"# Category iii - Orphan end: {query_counts['orphan_end']}",
+        '# Check "COBRA_joining_status.txt" for joining status of each query.',
+        '# Check "COBRA_joining_summary.txt" for joining details of "Extended_circular" and "Extended_partial" queries.',
+        file=log,
+        flush=True,
     )
-    log.flush()
     log.close()
 
 
