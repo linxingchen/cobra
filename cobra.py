@@ -126,25 +126,29 @@ def parse_args():
 
 
 # define functions for analyses
-def get_log_info(steps: int, log_file: TextIO | None = None):
+def get_log_info(steps: int, desc="COBRA Steps", log_file: TextIO | None = None):
     step = [0]
-    step_format_str = "[{0:0>" + f"{len(str(steps))}" + "}/" + f"{steps}"
+    step_format_str = "[{0:0>" + f"{len(str(steps))}" + "}/" + f"{steps}]"
 
     def steps_range():
         while True:
             step[0] += 1
             yield step_format_str.format(step[0])
 
-    stepin = iter(tqdm(steps_range(), desc="COBRA Steps", total=steps))
+    stepin = iter(tqdm(steps_range(), desc=desc, total=steps))
 
     def _log_info(description: str, end="\n"):
         print(
-            next(stepin) + " " + strftime("[%Y/%m/%d %H:%M:%S]") + description,
+            next(stepin),
+            strftime("[%Y/%m/%d %H:%M:%S]"),
+            description,
             end=end,
             file=log_file,
             flush=True,
         )
 
+    print(desc, file=log_file, flush=True)
+    next(stepin)
     return _log_info
 
 
@@ -869,7 +873,7 @@ def get_parsed_linkage(
     with pysam.AlignmentFile(f"{mapping_file}", "rb") as map_file:
         for rmap in tqdm(
             map_file,
-            desc="Getting contig linkage based on sam/bam. Be patient, this may take long.",
+            desc="Getting contig linkage based on sam/bam. Be patient, this may take long",
         ):
             if not rmap.is_unmapped and int(rmap.get_tag("NM")) <= linkage_mismatch:
                 assert rmap.query_name is not None
@@ -1056,11 +1060,13 @@ def write_and_run_blast(
                 open(f"{working_dir}/blastdb_2.fa", "w") as blastdb_2,
             ):
                 for header, seq, overlap in data_chunk:
-                    cobra_seq2lenblast[header] = len(seq) - overlap, []
+                    real_seq_len = len(seq) - overlap
+                    cobra_seq2lenblast[header] = real_seq_len, []
                     half = (len(seq) + 1) // 2
                     print(f">{header}_1\n{seq[:half]}", file=blastdb_1)
-                    print(f">{header}_2\n{seq[half:- overlap]}", file=blastdb_2)
-            os.system(f"makeblastdb -in {blastdb_1.name} -dbtype nucl > {outlog}")
+                    print(f">{header}_2\n{seq[half:real_seq_len]}", file=blastdb_2)
+            os.system(f"ls -sh {blastdb_1.name} {blastdb_2.name} > {outlog} 2>&1")
+            os.system(f"makeblastdb -in {blastdb_1.name} -dbtype nucl >> {outlog} 2>&1")
             os.system(
                 "blastn"
                 f" -task blastn"
@@ -1069,7 +1075,7 @@ def write_and_run_blast(
                 f" -out {outfile}"
                 f" -outfmt 6 -evalue 1e-10 -perc_identity {prec_identity}"
                 f" -num_threads 1 "
-                f">> {outlog}"
+                f">> {outlog} 2>&1"
             )
             with open(outfile) as r:
                 for line in r:
@@ -1521,7 +1527,6 @@ def main(
 
     # write input files information to log file
     log = open(f"{working_dir}/log", "w")  # log file
-    log_info = get_log_info(17, log)
     print(
         "1. INPUT INFORMATION",
         "# Assembler: "
@@ -1537,15 +1542,16 @@ def main(
         f"# Mapping file: {os.path.abspath(mapping_file)}",
         f"# Coverage file: {os.path.abspath(coverage_file)}",
         f"# Output folder: {os.path.abspath(working_dir)}",
-        "\n",
-        "2. PROCESSING STEPS",
+        sep="\n",
         file=log,
         flush=True,
     )
 
+    print("\n", "2. PROCESSING STEPS", sep="\n", file=log, flush=True)
     ##
     # import the whole contigs and save their end sequences
-    log_info("Reading contigs and getting the contig end pairs.", " ")
+    log_info_1 = get_log_info(5, "2.1. Loading assembly and mapping data", log)
+    log_info_1("Reading contigs and getting the contig end pairs.", " ")
     header2seq, header2len, link_pair = get_link_pair(
         assem_fa=assem_fa, maxk_length=maxk_length
     )
@@ -1553,7 +1559,7 @@ def main(
 
     ##
     # save all paired links to a file
-    log_info("Joining contigs by contig end (maxK)")
+    log_info_1("Joining contigs by contig end (maxK).", " ")
     one_path_end, two_paths_end = check_Y_paths(
         link_pair=link_pair, logfile=f"{working_dir}/COBRA_end_joining_pairs.tsv"
     )
@@ -1566,7 +1572,7 @@ def main(
     )
     ##
     # read and save the coverage of all contigs
-    log_info("Reading contig coverage information.")
+    log_info_1("Reading contig coverage information.")
     cov = get_cov(coverage_file)
     if len(cov) < len(header2seq):
         raise ValueError(
@@ -1575,7 +1581,7 @@ def main(
 
     ##
     # open the query file and save the information
-    log_info("Getting query contig list.", " ")
+    log_info_1("Getting query contig list.", " ")
     query_set = get_query_set(f"{query_fa}", uniset=header2seq)
     # distinguish orphan_end_query and non_orphan_end_query:
     orphan_end_query_1 = frozenset(
@@ -1593,7 +1599,7 @@ def main(
 
     ##
     # get the linkage of contigs based on paired-end reads mapping
-    log_info("Getting linkage based on sam/bam. Be patient, this may take long.")
+    log_info_1("Getting linkage based on sam/bam. Be patient, this may take long.")
     parsed_linkage, parsed_contig_spanned_by_PE_reads = get_parsed_linkage(
         mapping_file,
         trim_readno=trim_readno,
@@ -1605,12 +1611,15 @@ def main(
     ############################################################################
     ## Now all file are already loaded.                                       ##
     ############################################################################
+    log_info_2 = get_log_info(
+        8, "2.2. Analyzing assemblied paths and solving conflicts", log
+    )
     debug = open(f"{working_dir}/debug.txt", "w")
 
-    log_info("Detecting self_circular contigs, independent of mapping linkage")
+    log_info_2("Detecting self_circular contigs, independent of mapping linkage.")
     self_circular = frozenset(
         contig
-        for contig in tqdm(query_set, desc="Detecting self_circular contigs.")
+        for contig in tqdm(query_set, desc="Detecting self_circular contigs")
         if detect_self_circular(
             contig,
             one_path_end=one_path_end,
@@ -1644,7 +1653,7 @@ def main(
 
     ##
     # walk the joins
-    log_info("Detecting joins of contigs. ")
+    log_info_2("Detecting joins of contigs. ")
     contig2join, contig2join_reason, path_circular_end = get_contig2join(
         query_set=query_set,
         orphan_end_query=frozenset(orphan_end_query),
@@ -1661,7 +1670,7 @@ def main(
 
     ##
     # save the potential joining paths
-    log_info("Saving potential joining paths.")
+    log_info_2("Saving potential joining paths.")
     with open(f"{working_dir}/COBRA_potential_joining_paths.tsv", "w") as results:
         for item in sorted(contig2join):
             if contig_name(item) in self_circular:
@@ -1690,7 +1699,7 @@ def main(
 
     ##
     # get the joining paths
-    log_info("Getting the joining paths of contigs.")
+    log_info_2("Getting the joining paths of contigs.")
     contig2assembly = get_contig2assembly(contig2join, path_circular_end)
     # for debug
     print("# contig2assembly", file=debug, flush=True)
@@ -1709,7 +1718,7 @@ def main(
     }
 
     ##
-    log_info("Getting joined seqeuences.")
+    log_info_2("Getting joined seqeuences.")
     # query: seq, mark, len of overlap
     query2extension = {
         query: (
@@ -1724,7 +1733,7 @@ def main(
 
     ##
     # Similar direct terminal repeats may lead to invalid joins
-    log_info("Checking for invalid joining using BLASTn: close strains.")
+    log_info_2("Checking for invalid joining using BLASTn: close strains.")
     blast_half_file = run_blast_half(
         (
             i
@@ -1763,7 +1772,7 @@ def main(
         for k, v in tqdm(contig2assembly.items(), "stat query length and coverage")
     }
 
-    log_info("Grouping paths by sharing queries to check for invalid queries.")
+    log_info_2("Grouping paths by sharing queries to check for invalid queries.")
     query2groups = dict(
         enumerate(
             get_query2groups(contig2assembly=contig2assembly, query_set=query_set)
@@ -1783,7 +1792,7 @@ def main(
         ):
             print(*item[1][:2], item[0], *item[1][2:], sep="\t", file=results)
 
-    log_info("Filtering paths accoring to COBRA rules.")
+    log_info_2("Filtering paths accoring to COBRA rules.")
     failed_joins: dict[Literal["conflict", "circular_6", "nolink"], dict[str, int]] = {
         l: {  # type: ignore [misc]
             j: v[0]
@@ -1928,7 +1937,8 @@ def main(
     ############################################################################
     ## Now output paths                                                       ##
     ############################################################################
-    log_info(
+    log_info_3 = get_log_info(7, "2.3. Output extended paths and circulated paths", log)
+    log_info_3(
         "Saving extended_circular and extended_partial sequences for joining checking."
     )
     with (
@@ -1953,7 +1963,7 @@ def main(
 
     ##
     # save the joining details information
-    log_info(
+    log_info_3(
         'Getting the joining details of unique "extended_circular" and "extended_partial" query contigs.'
     )
     with (
@@ -2032,7 +2042,7 @@ def main(
                     file=detail_circular if "circular" in seq else detail_partial,
                 )
 
-    log_info("Getting the joining details of failed query contigs.")
+    log_info_3("Getting the joining details of failed query contigs.")
     with (
         open(
             f"{working_dir}/COBRA_category_ii-c_extended_failed_details.tsv",
@@ -2114,7 +2124,7 @@ def main(
 
     ##
     # save the joining summary information
-    log_info(
+    log_info_3(
         'Saving joining summary of "extended_circular" and "extended_partial" query contigs.'
     )
     with open(f"{working_dir}/COBRA_joining_summary.tsv", "w") as assembly_summary:
@@ -2140,7 +2150,7 @@ def main(
 
     ##
     # save the joining status information of each query
-    log_info("Saving joining status of all query contigs.")
+    log_info_3("Saving joining status of all query contigs.")
     assembled_info = open(
         f"{working_dir}/COBRA_joining_status.tsv", "w"
     )  # shows the COBRA status of each query
@@ -2217,7 +2227,7 @@ def main(
             )
 
     # for self circular
-    log_info("Saving self_circular contigs.")
+    log_info_3("Saving self_circular contigs.")
     with open(
         f"{working_dir}/COBRA_category_i_self_circular.fa", "w"
     ) as circular_fasta:
@@ -2267,15 +2277,15 @@ def main(
 
     ##
     # save new fasta file with all the others used in joining replaced by COBRA sequences excepting self_circular ones
-    log_info("Saving the new fasta file.")
+    log_info_3("Saving the new fasta file.")
     query_extension_used = {
         contig: query
         for query in checked_strict_rep
         for contig in contig2assembly[query]
     }
     with open(f"{working_dir}/{assem_fa.rsplit('/', 1)[-1]}.new.fa", "w") as new:
-        for header, sequence in sorted(header2seq.keys() - query_extension_used.keys()):
-            print(f">{header}\n{sequence}\n", file=new)
+        for header in sorted(header2seq.keys() - query_extension_used.keys()):
+            print(f">{header}\n{header2seq[header]}\n", file=new)
     os.system(
         f"cat {extended_circular_fasta.name} {extended_partial_fasta.name} > {new.name}"
     )
@@ -2285,7 +2295,7 @@ def main(
     ##
     # write the numbers to the log file
     print(
-        "",
+        "\n",
         "3. RESULTS SUMMARY",
         f"# Total queries: {len(query_set)}",
         f"# Category i   - self_circular: {query_counts['self_circular']}",
@@ -2295,6 +2305,7 @@ def main(
         f"# Category iii - orphan end: {query_counts['orphan_end']}",
         '# Check "COBRA_joining_status.tsv" for joining status of each query.',
         '# Check "COBRA_joining_summary.tsv" for joining details of "extended_circular" and "extended_partial" queries.',
+        sep="\n",
         file=log,
         flush=True,
     )
