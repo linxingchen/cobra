@@ -615,7 +615,7 @@ def summary_fasta(
     summary_file_headers = ["SeqID", "Length", "Coverage", "GC", "Ns"]
     if "self_circular" in fasta_file:
         summary_file_headers.append("DTR_length")
-    with open(f"{fasta_file}.summary.txt", "w") as so:
+    with open(f"{fasta_file}.summary.tsv", "w") as so:
         print(*summary_file_headers, sep="\t", file=so)
 
         record: SeqIO.SeqRecord
@@ -1555,7 +1555,7 @@ def main(
     # save all paired links to a file
     log_info("Joining contigs by contig end (maxK)")
     one_path_end, two_paths_end = check_Y_paths(
-        link_pair=link_pair, logfile=f"{working_dir}/COBRA_end_joining_pairs.txt"
+        link_pair=link_pair, logfile=f"{working_dir}/COBRA_end_joining_pairs.tsv"
     )
     print(
         f"Among {len(link_pair)} link pairs, found"
@@ -1662,7 +1662,7 @@ def main(
     ##
     # save the potential joining paths
     log_info("Saving potential joining paths.")
-    with open(f"{working_dir}/COBRA_potential_joining_paths.txt", "w") as results:
+    with open(f"{working_dir}/COBRA_potential_joining_paths.tsv", "w") as results:
         for item in sorted(contig2join):
             if contig_name(item) in self_circular:
                 if item.endswith("_L"):
@@ -1958,11 +1958,11 @@ def main(
     )
     with (
         open(
-            f"{working_dir}/COBRA_category_ii-a_extended_circular_unique_joining_details.txt",
+            f"{working_dir}/COBRA_category_ii-a_extended_circular_unique_joining_details.tsv",
             "w",
         ) as detail_circular,
         open(
-            f"{working_dir}/COBRA_category_ii-b_extended_partial_unique_joining_details.txt",
+            f"{working_dir}/COBRA_category_ii-b_extended_partial_unique_joining_details.tsv",
             "w",
         ) as detail_partial,
     ):
@@ -1971,6 +1971,9 @@ def main(
             *("Joined_Seq_ID", "Direction", "Joined_Seq_Len"),
             *("Start", "End", "Joined_Seq_Cov", "Joined_Seq_GC", "Joined_reason"),
         ]
+        print(*joining_detail_headers, sep="\t", file=detail_circular)
+        print(*joining_detail_headers, sep="\t", file=detail_partial)
+
         contig2join_details: dict[
             str,
             list[
@@ -2021,8 +2024,6 @@ def main(
                 )
                 site += header2len[contig] - maxk_length
 
-        print(*joining_detail_headers, sep="\t", file=detail_circular)
-        print(*joining_detail_headers, sep="\t", file=detail_partial)
         for seq in sorted(contig2join_details):
             for detail_values in contig2join_details[seq]:
                 print(
@@ -2031,33 +2032,108 @@ def main(
                     file=detail_circular if "circular" in seq else detail_partial,
                 )
 
+    log_info("Getting the joining details of failed query contigs.")
+    with (
+        open(
+            f"{working_dir}/COBRA_category_ii-c_extended_failed_details.tsv",
+            "w",
+        ) as detail_failed,
+    ):
+        print(*joining_detail_headers, sep="\t", file=detail_failed)
+        joining_detail_headers = [
+            *(
+                "Group_Status",
+                "Group_Id",
+                "Failed_Seq_ID",
+                "Failed_Status",
+                "Failed_Len",
+                "Failed_Path",
+            ),
+        ]
+        contig_fail_details: dict[
+            Literal["conflict", "circular_6", "nolink"], set[int]
+        ] = {
+            i: set() for i in ("conflict", "circular_6", "nolink")  # type: ignore [misc]
+        }
+        for groupi in query2groups:
+            if failed_reason := failed_groups.get(groupi):
+                contig_fail_details[failed_reason].add(groupi)
+        reported_failed_groups: set[int] = set()
+        for failed_reason in ("conflict", "circular_6", "nolink"):  # type: ignore[assignment]
+            for groupi in sorted(
+                contig_fail_details[failed_reason] - reported_failed_groups  # type: ignore[index]
+            ):
+                for query in sorted(
+                    query2groups[groupi].keys() & check_assembly_reason.keys()
+                ):
+                    rep_query = list(
+                        (check_assembly_reason[query][3] or {query})
+                        & assembly_rep.keys()
+                    )[0]
+                    print(
+                        *(failed_reason, groupi, rep_query),
+                        check_assembly_reason[rep_query][1],
+                        len(query2extension[rep_query][0])
+                        - query2extension[rep_query][2],
+                        " ".join(query2path[rep_query]),
+                        sep="\t",
+                        file=detail_failed,
+                    )
+                reported_failed_groups.add(groupi)
+        for groupi, rep_query in sorted(
+            (v[0], j)
+            for k, v in check_assembly_reason.items()
+            if v[1] in {"standalone", "longest"}
+            and v[0] not in failed_groups.keys() | reported_failed_groups
+            for j in v[3] or {k}
+            if j in assembly_rep and j in failed_blast_half
+        ):
+            print(
+                *("blast_half", groupi, rep_query),
+                check_assembly_reason[rep_query][1],
+                len(query2extension[rep_query][0]) - query2extension[rep_query][2],
+                " ".join(query2path[rep_query]),
+                sep="\t",
+                file=detail_failed,
+            )
+            reported_failed_groups.add(groupi)
+        for groupi, rep_query in sorted(
+            (v[0], k)
+            for k, v in redundant_circular_8.items()
+            if v[0] not in failed_groups.keys() | reported_failed_groups
+            and k in assembly_rep
+        ):
+            print(
+                *("circular_8", groupi, rep_query),
+                check_assembly_reason[rep_query][1],
+                len(query2extension[rep_query][0]) - query2extension[rep_query][2],
+                " ".join(query2path[rep_query]),
+                sep="\t",
+                file=detail_failed,
+            )
+
     ##
     # save the joining summary information
     log_info(
         'Saving joining summary of "extended_circular" and "extended_partial" query contigs.'
     )
-
-    with open(f"{working_dir}/COBRA_joining_summary.txt", "w") as assembly_summary:
+    with open(f"{working_dir}/COBRA_joining_summary.tsv", "w") as assembly_summary:
         print(
             *("Query_Seq_ID", "Query_Seq_Len"),
-            *("Total_Joined_Seqs", "Joined_seqs", "Total_Joined_Len"),
-            *("Assembled_Len", "Extended_Len", "Status", "Final_Seq_ID"),
+            *("Final_Seq_ID", "Assembled_Len", "Total_Joined_Seqs", "Status"),
+            "Joined_seqs",
             sep="\t",
             file=assembly_summary,
         )
         for query in sorted(checked_strict_rep):
             for contig in sorted(contig2assembly[query] & query_set):
-                d = len(query2extension[query][0]) - query2extension[query][2]
                 print(
-                    contig,
-                    header2len[contig],
-                    query2stat[query].query_count,
-                    ",".join(seqjoin2contig(query2path[query])),
-                    query2stat[query].seq_len,
-                    d,
-                    d - header2len[contig],
-                    query2extension[query][1],
+                    *(contig, header2len[contig]),
                     f"{query}_{query2extension[query][1]}",
+                    len(query2extension[query][0]) - query2extension[query][2],
+                    query2stat[query].query_count,
+                    query2extension[query][1],
+                    " ".join(seqjoin2contig(query2path[query])),
                     sep="\t",
                     file=assembly_summary,
                 )
@@ -2066,7 +2142,7 @@ def main(
     # save the joining status information of each query
     log_info("Saving joining status of all query contigs.")
     assembled_info = open(
-        f"{working_dir}/COBRA_joining_status.txt", "w"
+        f"{working_dir}/COBRA_joining_status.tsv", "w"
     )  # shows the COBRA status of each query
     print(
         *("SeqID", "Length", "Coverage", "GC", "Status", "Category"),
@@ -2192,7 +2268,6 @@ def main(
     ##
     # save new fasta file with all the others used in joining replaced by COBRA sequences excepting self_circular ones
     log_info("Saving the new fasta file.")
-
     query_extension_used = {
         contig: query
         for query in checked_strict_rep
@@ -2218,8 +2293,8 @@ def main(
         f"# Category ii  - extended_partial: {query_counts['extended_partial']} (Unique: {len(checked_strict_rep.keys() - path_circular)})",
         f"# Category ii  - extended_failed (due to COBRA rules): {query_counts['extended_failed']}",
         f"# Category iii - orphan end: {query_counts['orphan_end']}",
-        '# Check "COBRA_joining_status.txt" for joining status of each query.',
-        '# Check "COBRA_joining_summary.txt" for joining details of "extended_circular" and "extended_partial" queries.',
+        '# Check "COBRA_joining_status.tsv" for joining status of each query.',
+        '# Check "COBRA_joining_summary.tsv" for joining details of "extended_circular" and "extended_partial" queries.',
         file=log,
         flush=True,
     )
