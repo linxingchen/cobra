@@ -125,17 +125,20 @@ def parse_args():
     return parser.parse_args()
 
 
-# define functions for analyses
 def get_log_info(steps: int, desc="COBRA Steps", log_file: TextIO | None = None):
     step = [0]
     step_format_str = "[{0:0>" + f"{len(str(steps))}" + "}/" + f"{steps}]"
 
     def steps_range():
+        for i in tqdm(range(steps), desc=desc):
+            if i:
+                yield step_format_str.format(step[0])
+                step[0] += 1
         while True:
-            step[0] += 1
             yield step_format_str.format(step[0])
+            step[0] += 1
 
-    stepin = iter(tqdm(steps_range(), desc=desc, total=steps))
+    stepin = steps_range()
 
     def _log_info(description: str, end="\n"):
         print(
@@ -148,10 +151,10 @@ def get_log_info(steps: int, desc="COBRA Steps", log_file: TextIO | None = None)
         )
 
     print(desc, file=log_file, flush=True)
-    next(stepin)
     return _log_info
 
 
+# define functions for analyses
 def compre_sets(p: int, li: set, lj: set):
     if p < 0:
         return ""
