@@ -2101,12 +2101,12 @@ def main(
             # only report those not in the `longest`
             for query in sorted(
                 contig2assembly[rep_query]
+                & query_set
                 - {
                     contig
                     for query in contig2assembly[rep_query] & checked_strict_rep.keys()
                     for contig in contig2assembly[query]
                 }
-                - query_set
             ):
                 print(
                     *("circular_8", groupi, query),
