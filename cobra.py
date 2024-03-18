@@ -2150,7 +2150,7 @@ def main(
             for query in sorted(checked_strict_rep):
                 if query2extension[query][1] == label:
                     print(
-                        f">{query}_{query2extension[query][1]}\n{query2extension[query][0]}\n",
+                        f">{query}_{query2extension[query][1]}\n{query2extension[query][0]}",
                         file=(extended_fasta),
                         flush=True,
                     )
@@ -2179,7 +2179,7 @@ def main(
             # assert query not in extended_circular_query
             # assert query not in extended_partial_query
             # assert query not in orphan_end_query
-            print(f">{query}\n{header2seq[query]}\n", file=failed_join)
+            print(f">{query}\n{header2seq[query]}", file=failed_join)
             print(
                 query,
                 header2len[query],
@@ -2197,7 +2197,7 @@ def main(
         label = "orphan_end"
         for query in sorted(orphan_end_query):
             query_counts[label] += 1
-            print(f">{query}\n{header2seq[query]}\n", file=orphan_end)
+            print(f">{query}\n{header2seq[query]}", file=orphan_end)
             print(
                 query,
                 header2len[query],
@@ -2218,7 +2218,7 @@ def main(
         label = "self_circular"
         for query in sorted(self_circular):
             query_counts[label] += 1
-            print(f">{query}_self_circular\n{header2seq[query]}\n", file=circular_fasta)
+            print(f">{query}_self_circular\n{header2seq[query]}", file=circular_fasta)
             print(
                 query,
                 header2len[query] - maxk_length,
@@ -2232,7 +2232,7 @@ def main(
             )
         for query in sorted(self_circular_flexible_overlap):
             query_counts[label] += 1
-            print(f">{query}_self_circular\n{header2seq[query]}\n", file=circular_fasta)
+            print(f">{query}_self_circular\n{header2seq[query]}", file=circular_fasta)
             print(
                 query,
                 header2len[query] - self_circular_flexible_overlap[query],
@@ -2271,9 +2271,9 @@ def main(
     }
     with open(f"{working_dir}/{assem_fa.rsplit('/', 1)[-1]}.new.fa", "w") as new:
         for header in sorted(header2seq.keys() - query_extension_used.keys()):
-            print(f">{header}\n{header2seq[header]}\n", file=new)
+            print(f">{header}\n{header2seq[header]}", file=new)
     os.system(
-        f"cat {extended_fa_names['extended_circular']} {extended_fa_names['extended_partial']} >> {new.name}"
+        f"cat {extended_fa_names['extended_circular'].name} {extended_fa_names['extended_partial'].name} >> {new.name}"
     )
     ##
     # intermediate files
