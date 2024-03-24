@@ -1493,7 +1493,7 @@ def get_assembly2reason(
     return check_assembly_reason
 
 
-def main(
+def cobra(
     query_fa: str,
     assem_fa: str,
     mapping_file: str,
@@ -2040,12 +2040,9 @@ def main(
                 )
 
     log_info_3("Getting the joining details of failed query contigs.")
-    with (
-        open(
-            f"{working_dir}/COBRA_category_ii-c_extended_failed_paths.tsv", "w"
-        ) as detail_failed,
-        open(f"{working_dir}/COBRA_failed_summary.tsv", "w") as failed_summary,
-    ):
+    with open(
+        f"{working_dir}/COBRA_category_ii-c_extended_failed_paths.tsv", "w"
+    ) as detail_failed:
         print(
             *("Group_Status", "Group_Id"),
             *("Failed_Seq_ID", "Failed_Status", "Failed_Len", "Failed_Path"),
@@ -2298,9 +2295,9 @@ def main(
     log.close()
 
 
-if __name__ == "__main__":
+def main():
     args = parse_args()
-    main(
+    cobra(
         query_fa=args.query,
         assem_fa=args.fasta,
         mapping_file=args.mapping,
@@ -2313,3 +2310,7 @@ if __name__ == "__main__":
         linkage_mismatch=args.linkage_mismatch,
         threads=args.threads,
     )
+
+
+if __name__ == "__main__":
+    main()
