@@ -2269,10 +2269,10 @@ def main(
         for contig in contig2assembly[query]
     }
     with open(f"{working_dir}/{assem_fa.rsplit('/', 1)[-1]}.new.fa", "w") as new:
-        for header, sequence in sorted(header2seq.keys() - query_extension_used.keys()):
-            print(f">{header}\n{sequence}\n", file=new)
+        for header in sorted(header2seq.keys() - query_extension_used.keys()):
+            print(f">{header}\n{header2seq[header]}\n", file=new)
     os.system(
-        f"cat {extended_circular_fasta.name} {extended_partial_fasta.name} > {new.name}"
+        f"cat {extended_circular_fasta.name} {extended_partial_fasta.name} >> {new.name}"
     )
     ##
     # intermediate files
