@@ -220,18 +220,18 @@ pyCoverM is a simple Python interface to CoverM's fast coverage estimation funct
 cobra-meta -f input.fasta -q query.fasta -c coverage.txt -m mapping.sam -a idba -mink 20 -maxk 140
 ```
 
-(2) The users could also include the optional parameters like output name (-o), mismatch of mapped reads for linkage identification (-mm)
+(2) The users could also include the optional parameters like output name (-o), mismatch of mapped reads for linkage identification (-lm)
 
 ```
-cobra-meta -f all.contigs.fasta -q query.fasta -o query.fasta.COBRA.out -c coverage.txt -m mapping.sam -a idba -mink 20 -maxk 140 -mm 2
-```
-
-```
-cobra-meta -f all.contigs.fasta -q query.fasta -o query.fasta.COBRA.out -c coverage.txt -m mapping.sam -a metaspades -mink 21 -maxk 127 -mm 2
+cobra-meta -f all.contigs.fasta -q query.fasta -o query.fasta.COBRA.out -c coverage.txt -m mapping.sam -a idba -mink 20 -maxk 140 -lm 2
 ```
 
 ```
-cobra-meta -f all.contigs.fasta -q query.fasta -o query.fasta.COBRA.out -c coverage.txt -m mapping.sam -a megahit -mink 21 -maxk 141 -mm 2
+cobra-meta -f all.contigs.fasta -q query.fasta -o query.fasta.COBRA.out -c coverage.txt -m mapping.sam -a metaspades -mink 21 -maxk 127 -lm 2
+```
+
+```
+cobra-meta -f all.contigs.fasta -q query.fasta -o query.fasta.COBRA.out -c coverage.txt -m mapping.sam -a megahit -mink 21 -maxk 141 -lm 2
 ```
 
 
