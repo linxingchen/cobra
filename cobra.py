@@ -36,7 +36,7 @@ except ImportError:
     from Bio.SeqUtils import GC  # type: ignore
 
 
-def parse_args():
+def parse_args(args=None):
     parser = argparse.ArgumentParser(
         description="This script is used to get higher quality (including circular) virus genomes "
         "by joining assembled contigs based on their end overlaps."
@@ -124,7 +124,7 @@ def parse_args():
         help="the number of threads for blastn. [16]",
     )
     parser.add_argument("-v", "--version", action="version", version="cobra v1.2.3")
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
 def get_log_info(steps: int, desc="COBRA Steps", log_file: TextIO | None = None):
@@ -201,8 +201,8 @@ def get_target(item: str):
 
 def detect_self_circular(
     contig: str,
-    one_path_end: set[str],
-    two_paths_end: set[str],
+    one_path_end: frozenset[str],
+    two_paths_end: frozenset[str],
     link_pair: dict[str, list[str]],
 ):
     """
@@ -796,7 +796,7 @@ def check_Y_paths(
         # print link pairs into a file for check if interested
         if logfile:
             print(item, *sorted(link_pair[item]), sep="\t", file=p)
-    return one_path_end, two_paths_end
+    return frozenset(one_path_end), frozenset(two_paths_end)
 
 
 def get_cov(coverage_file: Path):
@@ -806,13 +806,13 @@ def get_cov(coverage_file: Path):
         for line in coverage:
             header_cov, cov_value = line.strip().split("\t")[:2]
             try:
-                cov[header_cov] = round(float(cov_value), 3)
+                cov[header_cov] = float(cov_value)
             except ValueError:
                 pass
             break
         for line in coverage:
             header_cov, cov_value = line.strip().split("\t")[:2]
-            cov[header_cov] = round(float(cov_value), 3)
+            cov[header_cov] = float(cov_value)
     return cov
 
 
@@ -839,7 +839,7 @@ def get_query_set(query_fa: Path, uniset: dict[str, T]):
                     f"Query {header} is not in your whole contig fasta file, please check!",
                     flush=True,
                 )
-    return query_set
+    return frozenset(query_set)
 
 
 def get_parsed_linkage(
@@ -851,7 +851,8 @@ def get_parsed_linkage(
 ):
     """
     parsed_linkage: paired linkage supported by bam file
-    parsed_contig_spanned_by_PE_reads: contig spanned by paired-end reads
+    parsed_contig_spanned_by_PE_reads:
+        contig without kmer with other contigs, and the end may be spanned by paired-end reads
     """
     # Initialize a defaultdict to store linked contigs
     parsed_linkage: set[tuple[str, str]] = set()
@@ -1130,7 +1131,7 @@ def run_blast_half(
         temp_out = Path(f"{outfile}_temp")
         temp_out.mkdir()
         futures = {
-            executor.submit(write_and_run_blast, data_chunk, temp_out / "tmp_{i}")
+            executor.submit(write_and_run_blast, data_chunk, temp_out / f"tmp_{i}")
             for i, data_chunk in enumerate(group_yield(query2compare, n))
         }
         for future in tqdm(
@@ -1166,7 +1167,7 @@ def get_failed_blast_half(outfile: str):
     )
 
 
-def get_query2groups(contig2assembly: dict[str, set[str]], query_set: set[str]):
+def get_query2groups(contig2assembly: dict[str, set[str]], query_set: frozenset[str]):
     """
     group all query paths if they shared paths
 
@@ -1179,6 +1180,7 @@ def get_query2groups(contig2assembly: dict[str, set[str]], query_set: set[str]):
       [query]          ^- dup of k141_1 (contig in path)
 
     Yield: {
+        # keys | special contigs                    | query contigs
         k141_1: (frozenset(k141_1)                , frozenset()),
         k141_2: (frozenset(k141_1, k141_3)        , frozenset(k141_2, k141_3)),
         k141_4: (frozenset(k141_1        , k141_4), frozenset()),
@@ -1434,9 +1436,11 @@ def get_assembly2reason(
                             and subset_circular[-1] != frags[-1]
                         ):
                             if (
-                                contig2assembly[frags[-1]]
+                                arg_contigs := contig2assembly[frags[-1]]
                                 - contig2assembly[subset_circular[-1]]
-                            ) & contig2assembly.keys():
+                            ) & (
+                                contig2assembly.keys()
+                            ) or arg_contigs & failed_join_potential:
                                 # if contig < contig_1
                                 # and contig_1 is not circular
                                 # and contig_1 at the arm of `6`
@@ -1529,7 +1533,6 @@ def cobra(
         f"# Output folder: {working_dir.expanduser().absolute().resolve()}",
         sep="\n",
     )
-
     _log_info("\n", "2. PROCESSING STEPS", sep="\n")
     # import the whole contigs and save their end sequences
     _log_info_1 = get_log_info(5, "2.1. Loading assembly and mapping data", logfile)
@@ -1581,7 +1584,6 @@ def cobra(
     ############################################################################
     ## Now all file are already loaded.                                       ##
     ############################################################################
-    _log_debug = lambda *n, **k: print(*n, **k, file=debugfile, flush=True)
     _log_info_2 = get_log_info(
         8, "2.2. Analyzing assemblied paths and solving conflicts", logfile
     )
@@ -1597,6 +1599,7 @@ def cobra(
             link_pair=link_pair,
         )
     )
+    _log_debug = lambda *n, **k: print(*n, **k, file=debugfile, flush=True)
     _log_debug(f"# self_circular: {len(self_circular)}")
     _log_debug(sorted(self_circular))
 
@@ -1643,6 +1646,7 @@ def cobra(
 
     # get the fail_to_join contigs, but not due to orphan end
     # the simplest situation
+    # overlap found, but not supported by reads linkage
     failed_join_potential = frozenset(
         contig
         for contig in query_set
@@ -1671,7 +1675,8 @@ def cobra(
             contig2join=contig2join,
             path_circular_end=path_circular_end,
         )
-        for query in contig2assembly
+        for _querys in (contig2assembly, failed_join_potential)
+        for query in _querys
     }
 
     _log_info_2("Getting joined seqeuences.")
@@ -1679,8 +1684,11 @@ def cobra(
     query2extension = {
         query: (
             extend_query(query2path[query], header2seq=header2seq, maxk_length=maxk),
-            "extended_circular" if query in path_circular else "extended_partial",
-            maxk if query in path_circular else 0,
+            *(
+                ("extended_circular", maxk)
+                if query in path_circular
+                else ("extended_partial", 0)
+            ),
         )
         for query in tqdm(contig2assembly, desc="Extending path of query")
     }
@@ -1689,14 +1697,11 @@ def cobra(
     _log_info_2("Checking for invalid joining using BLASTn: close strains.")
     blast_half_file = run_blast_half(
         (
-            i
+            (contig, seq, overlap)
             for j in (
+                ((contig, query2extension[contig]) for contig in contig2assembly),
                 (
-                    (contig, seq, overlap)
-                    for contig, (seq, label, overlap) in query2extension.items()
-                ),
-                (
-                    (contig, header2seq[contig], overlap)
+                    (contig, (header2seq[contig], "", overlap))
                     for single_circle in (
                         self_circular,
                         self_circular_flexible_overlap,
@@ -1705,7 +1710,7 @@ def cobra(
                     for overlap in (self_circular_flexible_overlap.get(contig, maxk),)
                 ),
             )
-            for i in j
+            for contig, (seq, label, overlap) in j
         ),
         working_dir / "blast_pairs.tsv",
         threads=threads,
@@ -1792,12 +1797,9 @@ def cobra(
     _log_info(
         *(
             "\t".join(
-                [
-                    *(compre_sets(pi - pj, li, lj) for pj, (j, lj) in enumerate(ll)),
-                    f"{i}",
-                ]
+                [*(compre_sets(pi - pj, li, lj) for pj, (j, lj) in enumerate(ll)), i]
             )
-            for ll in [
+            for ll in (
                 [
                     ("query_set", query_set),
                     ("orphan_end_query", orphan_end_query),
@@ -1807,17 +1809,17 @@ def cobra(
                     ),
                     ("self_circular", self_circular),
                     ("failed_join_potential", failed_join_potential),
-                    ("failed_join_nolink", failed_joins["nolink"].keys()),
-                    ("failed_join_conflict", failed_joins["conflict"].keys()),
-                    ("failed_join_circular_6", failed_joins["circular_6"].keys()),
+                    ("failed_join [nolink]", failed_joins["nolink"].keys()),
+                    ("failed_join [conflict]", failed_joins["conflict"].keys()),
+                    ("failed_join [circular_6]", failed_joins["circular_6"].keys()),
                     ("path_circular", path_circular),
                     ("checked_strict", checked_strict.keys()),
                     ("checked_strict_rep", checked_strict_rep.keys()),
                     ("assembly_rep", assembly_rep.keys()),
                     ("redundant_circular_8", redundant_circular_8.keys()),
                     ("failed_blast_half", failed_blast_half),
-                ]
-            ]
+                ],
+            )
             for pi, (i, li) in enumerate(ll)
         ),
         sep="\n",
@@ -1843,16 +1845,16 @@ def cobra(
 
         def check_query(query: str):
             print(
-                f"{query=}",
-                f"{query in query_set=}",
-                f"{contig2assembly.get(query)=}",
-                f"{check_assembly_reason.get(query)=}",
-                f"{query in path_circular=}",
-                f"{query in failed_join_potential=}",
-                f"{query in failed_joins['nolink']=}",
-                f"{query in failed_joins['conflict']=}",
+                f"{query                              =}",
+                f"{query in query_set                 =}",
+                f"{contig2assembly.get(query)         =}",
+                f"{check_assembly_reason.get(query)   =}",
+                f"{query in path_circular             =}",
+                f"{query in failed_join_potential     =}",
+                f"{query in failed_joins['nolink']    =}",
+                f"{query in failed_joins['conflict']  =}",
                 f"{query in failed_joins['circular_6']=}",
-                f"{query in checked_strict=}",
+                f"{query in checked_strict            =}",
                 sep="\n",
             )
             print(query2groups.get(check_assembly_reason.get(query, [-1])[0]))
@@ -1997,14 +1999,25 @@ def cobra(
             ):
                 for query in sorted(query2groups[groupi].keys()):
                     for contig in query2groups[groupi][query][1] or {query}:
-                        print(
-                            *(failed_reason, groupi, query),
-                            check_assembly_reason.get(query, ("", "redundant"))[1],
-                            len(query2extension[query][0]) - query2extension[query][2],
-                            " ".join(query2path[query]),
-                            sep="\t",
-                            file=detail_failed,
-                        )
+                        if contig in failed_join_potential:
+                            print(
+                                *(failed_reason, groupi, query),
+                                check_assembly_reason.get(query, ("", "redundant"))[1],
+                                header2len[query],
+                                "",
+                                sep="\t",
+                                file=detail_failed,
+                            )
+                        else:
+                            print(
+                                *(failed_reason, groupi, query),
+                                check_assembly_reason.get(query, ("", "redundant"))[1],
+                                len(query2extension[query][0])
+                                - query2extension[query][2],
+                                " ".join(query2path[query]),
+                                sep="\t",
+                                file=detail_failed,
+                            )
                 reported_failed_groups.add(groupi)
         for groupi, rep_query in sorted(
             (v[0], k)
@@ -2020,14 +2033,24 @@ def cobra(
                 for query in sorted(query2groups[groupi])
                 for contig in sorted(query2groups[groupi][query][1] or {query})
             ):
-                print(
-                    *("blast_half", groupi, query),
-                    check_assembly_reason[rep_query][1],
-                    len(query2extension[query][0]) - query2extension[query][2],
-                    " ".join(query2path[query]),
-                    sep="\t",
-                    file=detail_failed,
-                )
+                if contig in failed_join_potential:
+                    print(
+                        *("blast_half", groupi, query),
+                        check_assembly_reason[rep_query][1],
+                        header2len[query],
+                        "",
+                        sep="\t",
+                        file=detail_failed,
+                    )
+                else:
+                    print(
+                        *("blast_half", groupi, query),
+                        check_assembly_reason[rep_query][1],
+                        len(query2extension[query][0]) - query2extension[query][2],
+                        " ".join(query2path[query]),
+                        sep="\t",
+                        file=detail_failed,
+                    )
             reported_failed_groups.add(groupi)
         for groupi, rep_query in sorted(
             (v[0], k)
@@ -2046,14 +2069,24 @@ def cobra(
                     for contig in contig2assembly[query]
                 }
             ):
-                print(
-                    *("circular_8", groupi, query),
-                    check_assembly_reason[rep_query][1],
-                    len(query2extension[query][0]) - query2extension[query][2],
-                    " ".join(query2path[query]),
-                    sep="\t",
-                    file=detail_failed,
-                )
+                if contig in failed_join_potential:
+                    print(
+                        *("circular_8", groupi, query),
+                        check_assembly_reason[rep_query][1],
+                        header2len[query],
+                        "",
+                        sep="\t",
+                        file=detail_failed,
+                    )
+                else:
+                    print(
+                        *("circular_8", groupi, query),
+                        check_assembly_reason[rep_query][1],
+                        len(query2extension[query][0]) - query2extension[query][2],
+                        " ".join(query2path[query]),
+                        sep="\t",
+                        file=detail_failed,
+                    )
 
     # save the joining summary information
     # save the joining status information of each query
@@ -2232,16 +2265,16 @@ def main():
     # get the name of the whole contigs fasta file
     # folder of output
     query_fa = Path(args.query)
-    working_dir = Path(args.outdir) if args.output else Path(f"{query_fa.name}_COBRA")
+    working_dir = Path(args.output) if args.output else Path(f"{query_fa.name}_COBRA")
     ##
     # get information from the input files and parameters and save information
     # get the name of the whole contigs fasta file
     # folder of output
     # checking if output folder exists
-    if os.path.exists(working_dir):
+    if working_dir.exists():
         raise FileExistsError(f"Output folder <{working_dir}> exists, please check.")
     else:
-        os.mkdir(working_dir)
+        working_dir.mkdir(parents=True)
     # determine the length of overlap based on assembler and the largest kmer size
     maxk = args.maxk - 1 if args.assembler == "idba" else args.maxk
     # determine potential self_circular contigs from contigs with orphan end
