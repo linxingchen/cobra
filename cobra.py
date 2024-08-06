@@ -11,6 +11,8 @@ import concurrent.futures
 import itertools
 import os
 from collections import defaultdict
+from pathlib import Path
+import sys
 from time import strftime
 from typing import Callable, Iterable, Literal, NamedTuple, TextIO, TypeVar
 
@@ -34,7 +36,7 @@ except ImportError:
     from Bio.SeqUtils import GC  # type: ignore
 
 
-def parse_args():
+def parse_args(args=None):
     parser = argparse.ArgumentParser(
         description="This script is used to get higher quality (including circular) virus genomes "
         "by joining assembled contigs based on their end overlaps."
@@ -122,7 +124,7 @@ def parse_args():
         help="the number of threads for blastn. [16]",
     )
     parser.add_argument("-v", "--version", action="version", version="cobra v1.2.3")
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
 def get_log_info(steps: int, desc="COBRA Steps", log_file: TextIO | None = None):
@@ -199,8 +201,8 @@ def get_target(item: str):
 
 def detect_self_circular(
     contig: str,
-    one_path_end: set[str],
-    two_paths_end: set[str],
+    one_path_end: frozenset[str],
+    two_paths_end: frozenset[str],
     link_pair: dict[str, list[str]],
 ):
     """
@@ -266,7 +268,7 @@ def check_self_circular_soft(sequence: Seq, min_over_len: int):
 def get_contig2join(
     query_set: frozenset[str],
     orphan_end_query: frozenset[str],
-    parsed_linkage: frozenset[tuple[str, str]],
+    contig_pe_links: frozenset[tuple[str, str]],
     cov: dict[str, float],
     link_pair: dict[str, list[str]],
     one_path_end: frozenset[str],
@@ -370,7 +372,7 @@ def get_contig2join(
         return (
             contig_pair
             and contig_pair.endswith(other_direction)
-            and (contig + other_direction, point) in parsed_linkage
+            and (contig + other_direction, point) in contig_pe_links
         )
 
     def not_checked(end_list: Iterable[str], checked: list[str]):
@@ -397,7 +399,7 @@ def get_contig2join(
                         # 2.2. link_pair1 has similar coverage with contig
                         # however, it CANNOT be extend in the next step
                         checked_reason = "is_ok_to_add"
-                    if checked_reason and (end, link_pair1) in parsed_linkage:
+                    if checked_reason and (end, link_pair1) in contig_pe_links:
                         # 3. linkage between link_pair1 and end is supported by reads linkage
                         contig2join[end].append(link_pair1)
                         contig_checked[end].append(contig_name(link_pair1))
@@ -460,7 +462,7 @@ def get_contig2join(
                         checked_reason = "other_end_is_extendable"
                     elif is_ok_to_add(link_pair1, contig):
                         checked_reason = "is_ok_to_add"
-                    if checked_reason and (target, link_pair1) in parsed_linkage:
+                    if checked_reason and (target, link_pair1) in contig_pe_links:
                         contig2join[end].append(link_pair1)
                         contig_checked[end].append(contig_name(link_pair1))
                         contig2join_reason[contig][
@@ -657,18 +659,17 @@ def get_direction(item: str):
     return "reverse" if item.endswith("rc") else "forward"
 
 
-def total_length(contig_list: list[str], header2len: dict[str, int]):
+def total_length(contig_list: list[str], contig2len: dict[str, int]):
     """
     get the total length of all sequences in a joining path before overlap removing
     """
-    total = sum(header2len[contig_name(item)] for item in contig_list)
+    total = sum(contig2len[contig_name(item)] for item in contig_list)
     return total
 
 
-def get_link_pair(assem_fa: str, maxk_length: int):
-    header2seq: dict[str, Seq] = {}
-    header2len: dict[str, int] = {}
-    link_pair: dict[str, list[str]] = defaultdict(list)
+def get_link_pair(assem_fa: Path, maxk_length: int):
+    contig2seq: dict[str, Seq] = {}
+    contig2len: dict[str, int] = {}
     #
     d_L: dict[Seq, set[str]] = defaultdict(set)
     d_Lrc: dict[Seq, set[str]] = defaultdict(set)
@@ -682,8 +683,8 @@ def get_link_pair(assem_fa: str, maxk_length: int):
     ):
         header = str(record.id).strip()
         seq: Seq = record.seq
-        header2seq[header] = seq
-        header2len[header] = len(seq)
+        contig2seq[header] = seq
+        contig2len[header] = len(seq)
         # >contig
         # >>>>>>>...>>>>>>>
         # |- L ->   |- R ->
@@ -730,7 +731,8 @@ def get_link_pair(assem_fa: str, maxk_length: int):
     d_Rrc_d_Lrc_shared = set(d_Rrc) & set(d_Lrc)
     ##
     # get link_pair between ends
-    # link_pair = defaultdict(list)  # used to save all overlaps between ends
+    # used to save all overlaps between ends
+    link_pair: dict[str, list[str]] = defaultdict(list)
     for end in d_L_d_Lrc_shared:
         for left in d_L[end]:  # left is a seq name
             link_pair[left].extend(d_Lrc[end])
@@ -751,12 +753,12 @@ def get_link_pair(assem_fa: str, maxk_length: int):
             link_pair[right_rc].extend(d_Lrc[end])
         for left_rc in d_Lrc[end]:
             link_pair[left_rc].extend(d_Rrc[end])
-    return header2seq, header2len, link_pair
+    return contig2seq, contig2len, link_pair
 
 
 def check_Y_paths(
     link_pair: dict[str, list[str]],
-    logfile: str,
+    logfile: Path | None,
 ):
     one_path_end: set[str] = set()  # the end of contigs with one potential join
     two_paths_end: set[str] = set()  # the end of contigs with two potential joins
@@ -794,27 +796,27 @@ def check_Y_paths(
         # print link pairs into a file for check if interested
         if logfile:
             print(item, *sorted(link_pair[item]), sep="\t", file=p)
-    return one_path_end, two_paths_end
+    return frozenset(one_path_end), frozenset(two_paths_end)
 
 
-def get_cov(coverage_file: str):
+def get_cov(coverage_file: Path):
     cov: dict[str, float] = {}  # the coverage of contigs
     with open(coverage_file) as coverage:
         # Sometimes will give a file with header, just ignore it once
         for line in coverage:
             header_cov, cov_value = line.strip().split("\t")[:2]
             try:
-                cov[header_cov] = round(float(cov_value), 3)
+                cov[header_cov] = float(cov_value)
             except ValueError:
                 pass
             break
         for line in coverage:
             header_cov, cov_value = line.strip().split("\t")[:2]
-            cov[header_cov] = round(float(cov_value), 3)
+            cov[header_cov] = float(cov_value)
     return cov
 
 
-def get_query_set(query_fa: str, uniset: dict[str, T]):
+def get_query_set(query_fa: Path, uniset: dict[str, T]):
     query_set: set[str] = set()
 
     with open(query_fa) as f:
@@ -837,26 +839,27 @@ def get_query_set(query_fa: str, uniset: dict[str, T]):
                     f"Query {header} is not in your whole contig fasta file, please check!",
                     flush=True,
                 )
-    return query_set
+    return frozenset(query_set)
 
 
-def get_parsed_linkage(
-    mapping_file: str,
+def get_pe_links(
+    mapping_file: Path,
     trim_readno: Literal["no", "trim", "auto"],
-    header2len: dict[str, int],
+    contig2len: dict[str, int],
     orphan_end_query: frozenset[str],
     linkage_mismatch: int,
 ):
     """
-    parsed_linkage: paired linkage supported by bam file
-    parsed_contig_spanned_by_PE_reads: contig spanned by paired-end reads
+    contig_pe_links: paired linkage supported by bam file
+    orphan_pe_spanned:
+        contig without kmer with other contigs, and the end may be spanned by paired-end reads
     """
     # Initialize a defaultdict to store linked contigs
-    parsed_linkage: set[tuple[str, str]] = set()
+    contig_pe_links: set[tuple[str, str]] = set()
     linkage: dict[str, set[str]] = defaultdict(set)
     # Initialize a dictionary to store paired-end reads spanning contigs
     # Create a defaultdict(list) for each contig in header2seq, orphan_end first
-    contig_spanned_by_PE_reads: dict[str, dict[str, list[int]]] = {
+    orphan2pe_span: dict[str, dict[str, list[int]]] = {
         contig: defaultdict(list) for contig in orphan_end_query
     }
 
@@ -886,7 +889,7 @@ def get_parsed_linkage(
                     # get name just before use it to speed up
                     rmap_query_name = parse_query_name(rmap.query_name)
                     assert rmap.reference_name is not None
-                    if header2len[rmap.reference_name] > 1000:
+                    if contig2len[rmap.reference_name] > 1000:
                         # determine if the read maps to the left or right end
                         # >contig1
                         # >>>>>>>>>>>>>>>>>>>>>>>>...>
@@ -921,11 +924,11 @@ def get_parsed_linkage(
                         # >>>>>>>>>>>>>>......>>>>>>>>>>>>>
                         # |           | ...... |           |
                         # ^- 0        ^- 500   ^- -500     ^- -0
-                        # +++++++ ... |        .             | contig_spanned_by_PE_reads[contig1][read_i].append(0)
-                        #         ... +++++++  .             | contig_spanned_by_PE_reads[contig1][read_i].append(499)
+                        # +++++++ ... |        .             | orphan2pe_span[contig1][read_i].append(0)
+                        #         ... +++++++  .             | orphan2pe_span[contig1][read_i].append(499)
                         #             |+++++++ |             |
                         #                      +++++++       |
-                        #                       +++++++      | contig_spanned_by_PE_reads[contig1][read_i].append(-500)
+                        #                       +++++++      | orphan2pe_span[contig1][read_i].append(-500)
                         # @read_i/1
                         #               +++++++
                         #               @read_i/2
@@ -934,10 +937,10 @@ def get_parsed_linkage(
                         # only care about those in query
                         if (
                             rmap.reference_start <= 500
-                            or header2len[rmap.reference_name] - rmap.reference_start
+                            or contig2len[rmap.reference_name] - rmap.reference_start
                             <= 500
                         ):
-                            contig_spanned_by_PE_reads[rmap.reference_name][
+                            orphan2pe_span[rmap.reference_name][
                                 parse_query_name(rmap.query_name)
                             ].append(rmap.reference_start)
 
@@ -949,32 +952,29 @@ def get_parsed_linkage(
                 # Generate unique pairs of linked contigs for the current read using itertools.combinations
                 if item.rsplit("_", 1)[1] != item_1.rsplit("_", 1)[1]:
                     # If the contigs have different ends (_L or _R), add the combinations to the parsed_linkage
-                    parsed_linkage.add((item, item_1))
-                    parsed_linkage.add((item_1, item))
-                    parsed_linkage.add((item + "rc", item_1 + "rc"))
-                    parsed_linkage.add((item_1 + "rc", item + "rc"))
+                    contig_pe_links.add((item, item_1))
+                    contig_pe_links.add((item_1, item))
+                    contig_pe_links.add((item + "rc", item_1 + "rc"))
+                    contig_pe_links.add((item_1 + "rc", item + "rc"))
                 else:
                     # If the contigs have the same ends, add the combinations with reverse-complement (_rc) to the parsed_linkage
                     # Warning: contigs <= 1000 bp will be linked to it self: (contig1_L, contig1_Rrc) etc.
-                    parsed_linkage.add((item, item_1 + "rc"))
-                    parsed_linkage.add((item_1 + "rc", item))
-                    parsed_linkage.add((item + "rc", item_1))
-                    parsed_linkage.add((item_1, item + "rc"))
+                    contig_pe_links.add((item, item_1 + "rc"))
+                    contig_pe_links.add((item_1 + "rc", item))
+                    contig_pe_links.add((item + "rc", item_1))
+                    contig_pe_links.add((item_1, item + "rc"))
 
     # Initialize a set to store the contig spanned by paired-end reads
-    parsed_contig_spanned_by_PE_reads: set[str] = set()
+    orphan_pe_spanned: set[str] = set()
     for contig in orphan_end_query:
         # Check if the count is 0 and the contig has exactly two paired-end reads
-        for PE in contig_spanned_by_PE_reads[contig]:
-            if len(contig_spanned_by_PE_reads[contig][PE]) == 2:
+        for PE in orphan2pe_span[contig]:
+            if len(orphan2pe_span[contig][PE]) == 2:
                 # Check if the absolute difference between the positions of the two paired-end reads is greater than or equal to
                 # the length of contig minus 1000 bp
                 if (
-                    abs(
-                        contig_spanned_by_PE_reads[contig][PE][0]
-                        - contig_spanned_by_PE_reads[contig][PE][1]
-                    )
-                    >= header2len[contig] - 1000
+                    abs(orphan2pe_span[contig][PE][0] - orphan2pe_span[contig][PE][1])
+                    >= contig2len[contig] - 1000
                 ):
                     # >contig1, normally > 1000 bp
                     # >>>>>>>>>>>>>>......>>>>>>>>>>>>>
@@ -986,11 +986,11 @@ def get_parsed_linkage(
                     #             .        +++++++
                     #             .        .     +++++++
                     #             .        .  @read_i/2
-                    #             |--------| <- header2len[contig1] - 1000
+                    #             |--------| <- contig2len[contig1] - 1000
                     #
-                    parsed_contig_spanned_by_PE_reads.add(contig)
+                    orphan_pe_spanned.add(contig)
 
-    return frozenset(parsed_linkage), frozenset(parsed_contig_spanned_by_PE_reads)
+    return frozenset(contig_pe_links), frozenset(orphan_pe_spanned)
 
 
 class QueryCovVar(NamedTuple):
@@ -1002,7 +1002,7 @@ class QueryCovVar(NamedTuple):
 
     @classmethod
     def query(
-        cls, contigs: Iterable[str], cov: dict[str, float], header2len: dict[str, int]
+        cls, contigs: Iterable[str], cov: dict[str, float], contig2len: dict[str, int]
     ):
         """
         return stat of query coverage
@@ -1014,7 +1014,7 @@ class QueryCovVar(NamedTuple):
         - len     sum
         - len*cov sum
         """
-        cov_lens = pd.Series({i: (cov[i], header2len[i]) for i in contigs})
+        cov_lens = pd.Series({i: (cov[i], contig2len[i]) for i in contigs})
         return cls(
             len(cov_lens),
             cov_lens.apply(lambda x: x[0]).mean(),
@@ -1048,19 +1048,19 @@ def extend_query(
 
 def write_and_run_blast(
     data_chunk: Iterable[tuple[str, Seq, int]],
-    working_dir: str,
+    working_dir: Path,
     prec_identity=70,
     retries=3,
 ):
     cobra_seq2lenblast: dict[str, tuple[int, list[list[str]]]] = {}
     os.makedirs(working_dir)
-    outlog = f"{working_dir}/log"
-    outfile = f"{working_dir}/blastdb_2.vs.1.tsv"
+    outlog = working_dir / "log"
+    outfile = working_dir / "blastdb_2.vs.1.tsv"
     for i in range(1, retries + 1):
         try:
             with (
-                open(f"{working_dir}/blastdb_1.fa", "w") as blastdb_1,
-                open(f"{working_dir}/blastdb_2.fa", "w") as blastdb_2,
+                open(working_dir / "blastdb_1.fa", "w") as blastdb_1,
+                open(working_dir / "blastdb_2.fa", "w") as blastdb_2,
             ):
                 for header, seq, overlap in data_chunk:
                     real_seq_len = len(seq) - overlap
@@ -1107,7 +1107,10 @@ def group_yield(data: Iterable[T], n=100):
 
 
 def run_blast_half(
-    query2compare: Iterable[tuple[str, Seq, int]], outfile: str, threads: int, n=100
+    query2compare: Iterable[tuple[str, Seq, int]],
+    outfile: Path,
+    threads: int,
+    chunk_size=100,
 ):
     """
     Screening of contigs joined from closely related genomes using BLASTn comparison.
@@ -1125,10 +1128,11 @@ def run_blast_half(
         concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor,
         open(outfile, "w") as results,
     ):
-        os.makedirs(f"{outfile}_temp")
+        temp_out = Path(f"{outfile}_temp")
+        temp_out.mkdir()
         futures = {
-            executor.submit(write_and_run_blast, data_chunk, f"{outfile}_temp/tmp_{i}")
-            for i, data_chunk in enumerate(group_yield(query2compare, n))
+            executor.submit(write_and_run_blast, data_chunk, temp_out / f"tmp_{i}")
+            for i, data_chunk in enumerate(group_yield(query2compare, chunk_size))
         }
         for future in tqdm(
             concurrent.futures.as_completed(futures),
@@ -1163,7 +1167,7 @@ def get_failed_blast_half(outfile: str):
     )
 
 
-def get_query2groups(contig2assembly: dict[str, set[str]], query_set: set[str]):
+def query2groups(contig2assembly: dict[str, set[str]], query_set: frozenset[str]):
     """
     group all query paths if they shared paths
 
@@ -1176,6 +1180,7 @@ def get_query2groups(contig2assembly: dict[str, set[str]], query_set: set[str]):
       [query]          ^- dup of k141_1 (contig in path)
 
     Yield: {
+        # keys | special contigs                    | query contigs
         k141_1: (frozenset(k141_1)                , frozenset()),
         k141_2: (frozenset(k141_1, k141_3)        , frozenset(k141_2, k141_3)),
         k141_4: (frozenset(k141_1        , k141_4), frozenset()),
@@ -1234,9 +1239,8 @@ def get_query2groups(contig2assembly: dict[str, set[str]], query_set: set[str]):
 
 
 def get_assembly2reason(
-    query2groups: dict[
-        int, dict[str, tuple[frozenset[str], frozenset[str] | frozenset]]
-    ],
+    groupi: int,
+    group: dict[str, tuple[frozenset[str], frozenset[str] | frozenset]],
     contig2assembly: dict[str, set[str]],
     path_circular: frozenset[str],
     failed_join_potential: frozenset[str],
@@ -1269,344 +1273,303 @@ def get_assembly2reason(
             frozenset[str],
         ],
     ] = {}
-    for groupi in query2groups:
-        group = query2groups[groupi]
-        # group: rep_query: {rep_query in the path}
-        if len(group) == 1:
-            (this,) = list(group)
-            check_assembly_reason[this] = groupi, "standalone", [], group[this][1]
-        else:
-            subsets = sorted(group, key=lambda q: len(group[q][0]))
+    # group: rep_query: {rep_query in the path}
+    if len(group) == 1:
+        (this,) = list(group)
+        check_assembly_reason[this] = groupi, "standalone", [], group[this][1]
+    else:
+        subsets = sorted(group, key=lambda q: len(group[q][0]))
+        this = subsets.pop(0)
+        subset_trunks: dict[str, tuple[list[str], list[str]]] = {this: ([], [this])}
+        subset_unextendable: dict[str, set[str]] = {}
+        # assert all(i == v[-1] for i, v in subset_trunks.items())
+        #        and values in v is sorted subset.
+        while subsets:
+            # start from the shortest path
             this = subsets.pop(0)
-            subset_trunks: dict[str, tuple[list[str], list[str]]] = {this: ([], [this])}
-            subset_unextendable: dict[str, set[str]] = {}
-            # assert all(i == v[-1] for i, v in subset_trunks.items())
-            #        and values in v is sorted subset.
-            while subsets:
-                # start from the shortest path
-                this = subsets.pop(0)
-                this_feature: dict[
-                    Literal[
-                        "has_disjoint_found",
-                        "is_subset_of",
-                        "has_disjoint",
-                        "sub_standalong",
-                    ],
-                    list[str],
-                ] = {}
-                for frag in subset_trunks | subset_unextendable.keys():
-                    if group[frag][0] & group[this][0]:
-                        if group[frag][0] < group[this][0]:
-                            # k141_1: [k141_1]                 |
-                            # k141_2: [k141_1, k141_3]         | *+ update longer
-                            #
-                            if frag in subset_unextendable:
-                                this_feature.setdefault(
-                                    "has_disjoint_found", []
-                                ).append(frag)
-                            else:
-                                this_feature.setdefault("is_subset_of", []).append(frag)
-                        elif group[frag][0] == group[this][0]:
-                            assert False, "must be dereped previously"
-                        elif frag in subset_trunks:
-                            # k141_1: [k141_1]                 | keep
-                            # k141_2: [k141_1, k141_3]         | - discard
-                            # k141_4: [k141_1        , k141_4] | - discard
-                            #
-                            this_feature.setdefault("has_disjoint", []).append(frag)
-                        elif frag in subset_unextendable:
+            this_feature: dict[
+                Literal[
+                    "has_disjoint_found",
+                    "is_subset_of",
+                    "has_disjoint",
+                    "sub_standalong",
+                ],
+                list[str],
+            ] = {}
+            for frag in subset_trunks | subset_unextendable.keys():
+                if group[frag][0] & group[this][0]:
+                    if group[frag][0] < group[this][0]:
+                        # k141_1: [k141_1]                 |
+                        # k141_2: [k141_1, k141_3]         | *+ update longer
+                        #
+                        if frag in subset_unextendable:
                             this_feature.setdefault("has_disjoint_found", []).append(
                                 frag
                             )
-                        # else frag already has been captured by a subset_cannot_extend,
-                        # or totally the same of something
-                    else:
-                        # k141_2: [k141_1, k141_3]         |
-                        # k141_5: [              , k141_4] | + wait to create new item
-                        #
-                        this_feature.setdefault("sub_standalong", []).append(frag)
-                if "has_disjoint" in this_feature:
-                    check_assembly_reason[this] = (
-                        groupi,
-                        "conflict_query",
-                        this_feature["has_disjoint"],
-                        group[this][1],
-                    )
-                    for frag in this_feature["has_disjoint"] + this_feature.get(
-                        "is_subset_of", []
-                    ):
-                        # k141_1: [k141_1, k141_3]                 |
-                        # k141_3: [      , k141_3,       ]         | *- revert item
-                        # k141_5: [      , k141_3, k141_4]         |
-                        #
-                        frags = subset_trunks[frag][1]
-                        # find the not-conflict one
-                        for fragi in range(len(frags)):
-                            if (group[frags[fragi]][0] < group[this][0]) or not group[
-                                frags[fragi]
-                            ][0] & group[this][0]:
-                                pass
-                            else:
-                                break
-                        if fragi:
-                            # common subset found
-                            subset_trunks[frags[fragi - 1]] = (
-                                subset_trunks.pop(frag)[0],
-                                frags[:fragi],
-                            )
                         else:
-                            subset_trunks.pop(frag)
-                            subset_unextendable[this] = {this}
-                        # frozen it, or record in because this common subset cannot be bigger
-                        subset_unextendable[frags[max(fragi - 1, 0)]] = set(
-                            frags[fragi:]
+                            this_feature.setdefault("is_subset_of", []).append(frag)
+                    elif group[frag][0] == group[this][0]:
+                        assert False, "must be dereped previously"
+                    elif frag in subset_trunks:
+                        # k141_1: [k141_1]                 | keep
+                        # k141_2: [k141_1, k141_3]         | - discard
+                        # k141_4: [k141_1        , k141_4] | - discard
+                        #
+                        this_feature.setdefault("has_disjoint", []).append(frag)
+                    elif frag in subset_unextendable:
+                        this_feature.setdefault("has_disjoint_found", []).append(frag)
+                    # else frag already has been captured by a subset_cannot_extend,
+                    # or totally the same of something
+                else:
+                    # k141_2: [k141_1, k141_3]         |
+                    # k141_5: [              , k141_4] | + wait to create new item
+                    #
+                    this_feature.setdefault("sub_standalong", []).append(frag)
+            if "has_disjoint" in this_feature:
+                check_assembly_reason[this] = (
+                    groupi,
+                    "conflict_query",
+                    this_feature["has_disjoint"],
+                    group[this][1],
+                )
+                for frag in this_feature["has_disjoint"] + this_feature.get(
+                    "is_subset_of", []
+                ):
+                    # k141_1: [k141_1, k141_3]                 |
+                    # k141_3: [      , k141_3,       ]         | *- revert item
+                    # k141_5: [      , k141_3, k141_4]         |
+                    #
+                    frags = subset_trunks[frag][1]
+                    # find the not-conflict one
+                    for fragi in range(len(frags)):
+                        if (group[frags[fragi]][0] < group[this][0]) or not group[
+                            frags[fragi]
+                        ][0] & group[this][0]:
+                            pass
+                        else:
+                            break
+                    if fragi:
+                        # common subset found
+                        subset_trunks[frags[fragi - 1]] = (
+                            subset_trunks.pop(frag)[0],
+                            frags[:fragi],
                         )
+                    else:
+                        subset_trunks.pop(frag)
+                        subset_unextendable[this] = {this}
+                    # frozen it, or record in because this common subset cannot be bigger
+                    subset_unextendable[frags[max(fragi - 1, 0)]] = set(frags[fragi:])
+                    check_assembly_reason[frags[-1]] = (
+                        groupi,
+                        f"conflict_query",
+                        frags[fragi:],
+                        group[frags[-1]][1],
+                    )
+            elif "has_disjoint_found" in this_feature:
+                check_assembly_reason[this] = (
+                    groupi,
+                    "conflict_query",
+                    this_feature["has_disjoint_found"],
+                    group[this][1],
+                )
+                for frag in this_feature["has_disjoint_found"]:
+                    subset_unextendable[frag].add(this)
+            elif "is_subset_of" in this_feature:
+                if len(frags := this_feature["is_subset_of"]) == 1:
+                    # k141_1: [k141_1]                 |
+                    # k141_6: [k141_1, k141_4]         | *+ update longer
+                    #
+                    subset_trunks[frags[0]][1].append(this)
+                    subset_trunks[this] = subset_trunks.pop(frags[0])
+                else:
+                    # k141_1: [k141_1]                 |
+                    # k141_5: [      , k141_4]         |
+                    # k141_6: [k141_1, k141_4]         | + select and create new item
+                    #
+                    standalong_subs = {x for x in frags for y in frags if x < y}
+                    subset_trunks[this] = sorted(
+                        i for i in frags if i not in standalong_subs
+                    ), [this]
+            else:  # if set(this_feature) == {"sub_standalong"}:
+                # k141_5: [k141_4]                 | + create new item
+                subset_trunks[this] = [], [this]
+            # print(
+            #    f"{this=}\n"
+            #    f"{this_feature=}\n"
+            #    f"{subset_trunks=}\n"
+            #    f"{subset_unextendable=}\n"
+            # )
+        for subset in subset_trunks - subset_unextendable.keys():
+            # subset          = [k141_1, k141_2, k141_3, k141_4]
+            # subset_circular = [      , k141_2,       , k141_4]
+            #  k141_1: 1 | not circular                              | * keep if k141_3 in k141_2
+            #  k141_2: 0 | circular                                  | * keep if k141_3 not in k141_2
+            #  k141_3: 6 | not circular but with a circular inside   |
+            #  k141_4: 8 | circular and with another circular inside |
+            #
+            frags = list(subset_trunks[subset][1])
+            if any(i for i in subset_trunks[subset][0] if i in path_circular):
+                # all the contig assemblies are based on another assembly,
+                # which is already circular and considered in another iter of this for-loop
+                check_assembly_reason[subset] = (
+                    groupi,
+                    "circular_in_sub",
+                    frags,
+                    group[subset][1],
+                )
+            else:
+                subset_circular = [
+                    i for i in subset_trunks[subset][1] if i in path_circular
+                ]
+                if subset_circular:
+                    while (
+                        subset_circular
+                        and frags
+                        # confirm potential `6` to speed up
+                        and subset_circular[-1] != frags[-1]
+                    ):
+                        if (
+                            arg_contigs := contig2assembly[frags[-1]]
+                            - contig2assembly[subset_circular[-1]]
+                        ) & (
+                            contig2assembly.keys()
+                        ) or arg_contigs & failed_join_potential:
+                            # if contig < contig_1
+                            # and contig_1 is not circular
+                            # and contig_1 at the arm of `6`
+                            #  >contig
+                            # .|----->.
+                            # ^       T
+                            # |       |
+                            # _       v
+                            # .<-----|+|----->
+                            #          >contig_1 (conflict and both failed)
+                            #
+                            # if so, remove the biggest `6`
+                            frag = subset_circular[-1]
+                            check_assembly_reason[frag] = (
+                                groupi,
+                                "circular_6_conflict",
+                                frags[frags.index(frag) :],
+                                group[frag][1],
+                            )
+                            # (next check for extensions on smaller circle)
+                            frags = frags[: frags.index(frag)]
+                        else:  # if subset_circular and subset_circular[0] != frags[-1]:
+                            # check if any extension on the smallest `0`
+                            # if so, any `6` will be considered as part of the biggest `8`
+                            # and `8` is tightened as the smallest `0`
+                            frag = frags[-1]
+                            check_assembly_reason[frag] = (
+                                groupi,
+                                "circular_8_tight",
+                                frags[frags.index(frag) :],
+                                group[frag][1],
+                            )
+                            frags = frags[: frags.index(subset_circular[0]) + 1]
+                            # assert subset_circular[0] != frags[-1], "expected break the while-loop"
+                if frags:
+                    # remove query contigs that cannot extend itself
+                    this = ""
+                    for frag in frags:
+                        if contig2assembly[frag] & failed_join_potential:
+                            this = frag
+                            break
+                    if this:
                         check_assembly_reason[frags[-1]] = (
                             groupi,
-                            f"conflict_query",
-                            frags[fragi:],
+                            "nolink_query",
+                            frags[frags.index(frag) :],
                             group[frags[-1]][1],
                         )
-                elif "has_disjoint_found" in this_feature:
-                    check_assembly_reason[this] = (
-                        groupi,
-                        "conflict_query",
-                        this_feature["has_disjoint_found"],
-                        group[this][1],
-                    )
-                    for frag in this_feature["has_disjoint_found"]:
-                        subset_unextendable[frag].add(this)
-                elif "is_subset_of" in this_feature:
-                    if len(frags := this_feature["is_subset_of"]) == 1:
-                        # k141_1: [k141_1]                 |
-                        # k141_6: [k141_1, k141_4]         | *+ update longer
-                        #
-                        subset_trunks[frags[0]][1].append(this)
-                        subset_trunks[this] = subset_trunks.pop(frags[0])
-                    else:
-                        # k141_1: [k141_1]                 |
-                        # k141_5: [      , k141_4]         |
-                        # k141_6: [k141_1, k141_4]         | + select and create new item
-                        #
-                        standalong_subs = {x for x in frags for y in frags if x < y}
-                        subset_trunks[this] = sorted(
-                            i for i in frags if i not in standalong_subs
-                        ), [this]
-                else:  # if set(this_feature) == {"sub_standalong"}:
-                    # k141_5: [k141_4]                 | + create new item
-                    subset_trunks[this] = [], [this]
-                # print(
-                #    f"{this=}\n"
-                #    f"{this_feature=}\n"
-                #    f"{subset_trunks=}\n"
-                #    f"{subset_unextendable=}\n"
-                # )
-            for subset in subset_trunks - subset_unextendable.keys():
-                # subset          = [k141_1, k141_2, k141_3, k141_4]
-                # subset_circular = [      , k141_2,       , k141_4]
-                #  k141_1: 1 | not circular                              | * keep if k141_3 in k141_2
-                #  k141_2: 0 | circular                                  | * keep if k141_3 not in k141_2
-                #  k141_3: 6 | not circular but with a circular inside   |
-                #  k141_4: 8 | circular and with another circular inside |
-                #
-                frags = list(subset_trunks[subset][1])
-                if any(i for i in subset_trunks[subset][0] if i in path_circular):
-                    # all the contig assemblies are based on another assembly,
-                    # which is already circular and considered in another iter of this for-loop
-                    check_assembly_reason[subset] = (
-                        groupi,
-                        "circular_in_sub",
-                        frags,
-                        group[subset][1],
-                    )
-                else:
-                    subset_circular = [
-                        i for i in subset_trunks[subset][1] if i in path_circular
-                    ]
-                    if subset_circular:
-                        while (
-                            subset_circular
-                            and frags
-                            # confirm potential `6` to speed up
-                            and subset_circular[-1] != frags[-1]
-                        ):
-                            if (
-                                contig2assembly[frags[-1]]
-                                - contig2assembly[subset_circular[-1]]
-                            ) & contig2assembly.keys():
-                                # if contig < contig_1
-                                # and contig_1 is not circular
-                                # and contig_1 at the arm of `6`
-                                #  >contig
-                                # .|----->.
-                                # ^       T
-                                # |       |
-                                # _       v
-                                # .<-----|+|----->
-                                #          >contig_1 (conflict and both failed)
-                                #
-                                # if so, remove the biggest `6`
-                                frag = subset_circular[-1]
-                                check_assembly_reason[frag] = (
-                                    groupi,
-                                    "circular_6_conflict",
-                                    frags[frags.index(frag) :],
-                                    group[frag][1],
-                                )
-                                # (next check for extensions on smaller circle)
-                                frags = frags[: frags.index(frag)]
-                            else:  # if subset_circular and subset_circular[0] != frags[-1]:
-                                # check if any extension on the smallest `0`
-                                # if so, any `6` will be considered as part of the biggest `8`
-                                # and `8` is tightened as the smallest `0`
-                                frag = frags[-1]
-                                check_assembly_reason[frag] = (
-                                    groupi,
-                                    "circular_8_tight",
-                                    frags[frags.index(frag) :],
-                                    group[frag][1],
-                                )
-                                frags = frags[: frags.index(subset_circular[0]) + 1]
-                                # assert subset_circular[0] != frags[-1], "expected break the while-loop"
+                        frags = frags[: frags.index(frag)]
                     if frags:
-                        # remove query contigs that cannot extend itself
-                        this = ""
-                        for frag in frags:
-                            if contig2assembly[frag] & failed_join_potential:
-                                this = frag
-                                break
-                        if this:
-                            check_assembly_reason[frags[-1]] = (
-                                groupi,
-                                "nolink_query",
-                                frags[frags.index(frag) :],
-                                group[frags[-1]][1],
-                            )
-                            frags = frags[: frags.index(frag)]
-                        if frags:
-                            check_assembly_reason[frags[-1]] = (
-                                groupi,
-                                "longest",
-                                frags,
-                                group[frags[-1]][1],
-                            )
+                        check_assembly_reason[frags[-1]] = (
+                            groupi,
+                            "longest",
+                            frags,
+                            group[frags[-1]][1],
+                        )
     return check_assembly_reason
 
 
+T_JOIN_DETAIL = tuple[
+    str, Literal["forward", "reverse"], int, int, int, float, float, str
+]
+
+
 def cobra(
-    query_fa: str,
-    assem_fa: str,
-    mapping_file: str,
-    coverage_file: str,
+    query_fa: Path,
+    assem_fa: Path,
+    mapping_file: Path,
+    coverage_file: Path,
     maxk: int,
     mink: int,
-    assembler: Literal["idba", "megahit", "metaspades"],
     trim_readno: Literal["no", "trim", "auto"],
-    outdir: str = "",
+    working_dir: Path = Path(""),
     linkage_mismatch: int = 2,
     threads=1,
+    logfile=sys.stdout,
+    debugfile=sys.stderr,
 ):
-    ##
-    # get information from the input files and parameters and save information
-    # get the name of the whole contigs fasta file
-    # folder of output
-    if outdir:
-        working_dir = f"{outdir}"
-    else:
-        # get the name of the query fasta file
-        query_name = (
-            f"{query_fa}".rsplit("/", 1)[1] if "/" in query_fa else f"{query_fa}"
-        )
-        working_dir = f"{query_name}_COBRA"
-
-    # checking if output folder exists
-    if os.path.exists(working_dir):
-        raise FileExistsError(f"Output folder <{working_dir}> exists, please check.")
-    else:
-        os.mkdir(working_dir)
-
-    # determine the length of overlap based on assembler and the largest kmer size
-    maxk_length = maxk - 1 if assembler == "idba" else maxk
-
-    # write input files information to log file
-    log = open(f"{working_dir}/log", "w")  # log file
-    print(
+    _log_info = lambda *n, **k: print(*n, **k, file=logfile, flush=True)
+    _log_info(
         "1. INPUT INFORMATION",
-        "# Assembler: "
-        + {"idba": "IDBA_UD", "metaspades": "metaSPAdes", "megahit": "MEGAHIT"}[
-            assembler
-        ],
-        f"# Min-kmer: {mink}",
         f"# Max-kmer: {maxk}",
-        f"# Overlap length: {maxk_length} bp",
+        f"# Min-kmer: {mink}",
+        f"# Overlap length: {maxk} bp",
         f"# Read mapping max mismatches for contig linkage: {linkage_mismatch}",
-        f"# Query contigs: {os.path.abspath(query_fa)}",
-        f"# Whole contig set: {os.path.abspath(assem_fa)}",
-        f"# Mapping file: {os.path.abspath(mapping_file)}",
-        f"# Coverage file: {os.path.abspath(coverage_file)}",
-        f"# Output folder: {os.path.abspath(working_dir)}",
+        f"# Query contigs: {query_fa.expanduser().absolute().resolve()}",
+        f"# Whole contig set: {assem_fa.expanduser().absolute().resolve()}",
+        f"# Mapping file: {mapping_file.expanduser().absolute().resolve()}",
+        f"# Coverage file: {coverage_file.expanduser().absolute().resolve()}",
+        f"# Output folder: {working_dir.expanduser().absolute().resolve()}",
         sep="\n",
-        file=log,
-        flush=True,
     )
-
-    print("\n", "2. PROCESSING STEPS", sep="\n", file=log, flush=True)
-    ##
+    _log_info("\n", "2. PROCESSING STEPS", sep="\n")
     # import the whole contigs and save their end sequences
-    log_info_1 = get_log_info(5, "2.1. Loading assembly and mapping data", log)
-    log_info_1("Reading contigs and getting the contig end pairs.", " ")
-    header2seq, header2len, link_pair = get_link_pair(
-        assem_fa=assem_fa, maxk_length=maxk_length
+    _log_info_1 = get_log_info(5, "2.1. Loading assembly and mapping data", logfile)
+    _log_info_1("Reading contigs and getting the contig end pairs.", " ")
+    contig2seq, contig2len, link_pair = get_link_pair(
+        assem_fa=assem_fa, maxk_length=maxk
     )
-    print(f"A total of {len(header2seq)} contigs were imported.", file=log, flush=True)
+    _log_info(f"A total of {len(contig2seq)} contigs were imported.")
 
-    ##
     # save all paired links to a file
-    log_info_1("Joining contigs by contig end (maxK).", " ")
+    _log_info_1("Joining contigs by contig end (maxK).", " ")
     one_path_end, two_paths_end = check_Y_paths(
-        link_pair=link_pair, logfile=f"{working_dir}/COBRA_end_joining_pairs.tsv"
+        link_pair=link_pair, logfile=working_dir / f"COBRA_end_joining_pairs.tsv"
     )
-    print(
+    _log_info(
         f"Among {len(link_pair)} link pairs, found"
         f" {len(one_path_end)} one path end,"
         f" {len(two_paths_end)} two paths end.",
-        file=log,
-        flush=True,
     )
-    ##
     # read and save the coverage of all contigs
-    log_info_1("Reading contig coverage information.")
+    _log_info_1("Reading contig coverage information.")
     cov = get_cov(coverage_file)
-    if len(cov) < len(header2seq):
-        raise ValueError(
-            "Some contigs do not have coverage information. Please check. COBRA exits."
-        )
+    assert cov.keys() >= contig2seq.keys(), "Contigs missing coverage!"
 
-    ##
     # open the query file and save the information
-    log_info_1("Getting query contig list.", " ")
-    query_set = get_query_set(f"{query_fa}", uniset=header2seq)
+    _log_info_1("Getting query contig list.", " ")
+    query_set = get_query_set(query_fa, uniset=contig2seq)
     # distinguish orphan_end_query and non_orphan_end_query:
     orphan_end_query_1 = frozenset(
         header
         for header in query_set
-        if header + "_L" not in link_pair.keys()
-        and header + "_R" not in link_pair.keys()
+        if f"{header}_L" not in link_pair and f"{header}_R" not in link_pair
     )
-    print(
+    _log_info(
         f"A total of {len(query_set)} query contigs were imported, "
         f"with {len(orphan_end_query_1)} query with unique end (orphan).",
-        file=log,
-        flush=True,
     )
 
-    ##
     # get the linkage of contigs based on paired-end reads mapping
-    log_info_1("Getting linkage based on sam/bam. Be patient, this may take long.")
-    parsed_linkage, parsed_contig_spanned_by_PE_reads = get_parsed_linkage(
+    _log_info_1("Getting linkage based on sam/bam. Be patient, this may take long.")
+    contig_pe_links, orphan_pe_spanned = get_pe_links(
         mapping_file,
         trim_readno=trim_readno,
-        header2len=header2len,
+        contig2len=contig2len,
         orphan_end_query=orphan_end_query_1,
         linkage_mismatch=linkage_mismatch,
     )
@@ -1614,12 +1577,11 @@ def cobra(
     ############################################################################
     ## Now all file are already loaded.                                       ##
     ############################################################################
-    log_info_2 = get_log_info(
-        8, "2.2. Analyzing assemblied paths and solving conflicts", log
+    _log_info_2 = get_log_info(
+        8, "2.2. Analyzing assemblied paths and solving conflicts", logfile
     )
-    debug = open(f"{working_dir}/debug.txt", "w")
 
-    log_info_2("Detecting self_circular contigs, independent of mapping linkage.")
+    _log_info_2("Detecting self_circular contigs, independent of mapping linkage.")
     self_circular = frozenset(
         contig
         for contig in tqdm(query_set, desc="Detecting self_circular contigs")
@@ -1630,37 +1592,29 @@ def cobra(
             link_pair=link_pair,
         )
     )
-
-    # for debug
-    print(f"# self_circular: {len(self_circular)}", file=debug, flush=True)
-    print(sorted(self_circular), file=debug, flush=True)
+    _log_debug = lambda *n, **k: print(*n, **k, file=debugfile, flush=True)
+    _log_debug(f"# self_circular: {len(self_circular)}")
+    _log_debug(sorted(self_circular))
 
     # orphan end queries info
-    # determine potential self_circular contigs from contigs with orphan end
-    min_over_len = mink - 1 if assembler == "idba" else mink
     # determine if there is DTR for those query with orphan ends, if yes, assign as self_circular as well
     self_circular_flexible_overlap = {
         contig: l
-        for contig in parsed_contig_spanned_by_PE_reads
-        if (l := check_self_circular_soft(header2seq[contig], min_over_len)) > 0
+        for contig in orphan_pe_spanned
+        if (l := check_self_circular_soft(contig2seq[contig], mink)) > 0
     }
     orphan_end_query = orphan_end_query_1 - self_circular_flexible_overlap.keys()
-
-    # debug
-    print(
-        f"# self_circular_flexible_overlap: {len(self_circular_flexible_overlap)}",
-        file=debug,
-        flush=True,
+    _log_debug(
+        f"# self_circular_flexible_overlap: {len(self_circular_flexible_overlap)}"
     )
-    print(sorted(self_circular_flexible_overlap), file=debug, flush=True)
+    _log_debug(sorted(self_circular_flexible_overlap))
 
-    ##
     # walk the joins
-    log_info_2("Detecting joins of contigs. ")
+    _log_info_2("Detecting joins of contigs. ")
     contig2join, contig2join_reason, path_circular_end = get_contig2join(
         query_set=query_set,
-        orphan_end_query=frozenset(orphan_end_query),
-        parsed_linkage=parsed_linkage,
+        orphan_end_query=orphan_end_query,
+        contig_pe_links=contig_pe_links,
         cov=cov,
         link_pair=link_pair,
         one_path_end=one_path_end,
@@ -1668,13 +1622,12 @@ def cobra(
         self_circular=self_circular,
     )
     path_circular = frozenset(contig_name(i) for i in path_circular_end)
-    print("# path_circular", file=debug, flush=True)
-    print(sorted(path_circular), file=debug, flush=True)
+    _log_debug("# path_circular")
+    _log_debug(sorted(path_circular))
 
-    ##
     # save the potential joining paths
-    log_info_2("Saving potential joining paths.")
-    with open(f"{working_dir}/COBRA_potential_joining_paths.tsv", "w") as results:
+    _log_info_2("Saving potential joining paths.")
+    with open(working_dir / f"COBRA_potential_joining_paths.tsv", "w") as results:
         for item in sorted(contig2join):
             if contig_name(item) in self_circular:
                 if item.endswith("_L"):
@@ -1684,9 +1637,9 @@ def cobra(
             elif contig2join[item]:
                 print(item, contig2join[item], sep="\t", file=results)
 
-    ##
     # get the fail_to_join contigs, but not due to orphan end
     # the simplest situation
+    # overlap found, but not supported by reads linkage
     failed_join_potential = frozenset(
         contig
         for contig in query_set
@@ -1697,19 +1650,17 @@ def cobra(
             and len(contig2join[contig + "_R"]) == 0
         )
     )
-    print("# failed_join_potential", file=debug, flush=True)
-    print(sorted(failed_join_potential), file=debug, flush=True)
+    _log_debug("# failed_join_potential")
+    _log_debug(sorted(failed_join_potential))
 
-    ##
     # get the joining paths
-    log_info_2("Getting the joining paths of contigs.")
+    _log_info_2("Getting the joining paths of contigs.")
     contig2assembly = get_contig2assembly(contig2join, path_circular_end)
     # for debug
-    print("# contig2assembly", file=debug, flush=True)
+    _log_debug("# contig2assembly")
     for k in sorted(contig2assembly):
-        print(k, sorted(contig2assembly[k]), file=debug, flush=True)
+        _log_debug(k, sorted(contig2assembly[k]))
 
-    #
     # get the joining order of contigs, seems to be super of `contig2assembly`
     query2path = {
         query: join_seqs(
@@ -1717,91 +1668,88 @@ def cobra(
             contig2join=contig2join,
             path_circular_end=path_circular_end,
         )
-        for query in contig2assembly
+        for _querys in (contig2assembly, failed_join_potential)
+        for query in _querys
     }
 
-    ##
-    log_info_2("Getting joined seqeuences.")
+    _log_info_2("Getting joined seqeuences.")
     # query: seq, mark, len of overlap
     query2extension = {
         query: (
-            extend_query(
-                query2path[query], header2seq=header2seq, maxk_length=maxk_length
+            extend_query(query2path[query], header2seq=contig2seq, maxk_length=maxk),
+            *(
+                ("extended_circular", maxk)
+                if query in path_circular
+                else ("extended_partial", 0)
             ),
-            "extended_circular" if query in path_circular else "extended_partial",
-            maxk_length if query in path_circular else 0,
         )
         for query in tqdm(contig2assembly, desc="Extending path of query")
     }
 
-    ##
     # Similar direct terminal repeats may lead to invalid joins
-    log_info_2("Checking for invalid joining using BLASTn: close strains.")
+    _log_info_2("Checking for invalid joining using BLASTn: close strains.")
     blast_half_file = run_blast_half(
         (
-            i
+            (contig, seq, overlap)
             for j in (
+                ((contig, query2extension[contig]) for contig in contig2assembly),
                 (
-                    (contig, seq, overlap)
-                    for contig, (seq, label, overlap) in query2extension.items()
-                ),
-                (
-                    (contig, header2seq[contig], overlap)
+                    (contig, (contig2seq[contig], "", overlap))
                     for single_circle in (
                         self_circular,
                         self_circular_flexible_overlap,
                     )
                     for contig in single_circle
-                    for overlap in (
-                        self_circular_flexible_overlap.get(contig, maxk_length),
-                    )
+                    for overlap in (self_circular_flexible_overlap.get(contig, maxk),)
                 ),
             )
-            for i in j
+            for contig, (seq, label, overlap) in j
         ),
-        f"{working_dir}/blast_pairs.tsv",
+        working_dir / "blast_pairs.tsv",
         threads=threads,
-        n=100,
+        chunk_size=100,
     )
-    # blast_half_file = f"{working_dir}/blast_pairs.tsv"
+    # blast_half_file = working_dir/f"blast_pairs.tsv"
     failed_blast_half = get_failed_blast_half(blast_half_file)
     # for debug
-    print("# failed_blast_half", file=debug, flush=True)
-    print(sorted(failed_blast_half), file=debug, flush=True)
-    debug.close()
+    _log_debug("# failed_blast_half")
+    _log_debug(sorted(failed_blast_half))
 
     query2stat = {
-        k: QueryCovVar.query(v, cov=cov, header2len=header2len)
+        k: QueryCovVar.query(v, cov=cov, contig2len=contig2len)
         for k, v in tqdm(contig2assembly.items(), "stat query length and coverage")
     }
 
-    log_info_2("Grouping paths by sharing queries to check for invalid queries.")
-    query2groups = dict(
-        enumerate(
-            get_query2groups(contig2assembly=contig2assembly, query_set=query_set)
-        )
+    _log_info_2("Grouping paths by sharing queries to check for invalid queries.")
+    groups2ext_query = dict(
+        enumerate(query2groups(contig2assembly=contig2assembly, query_set=query_set))
     )
-    check_assembly_reason = get_assembly2reason(
-        query2groups=query2groups,
-        contig2assembly=contig2assembly,
-        path_circular=path_circular,
-        failed_join_potential=failed_join_potential,
-    )
+    check_assembly_reason = {
+        k: v
+        for groupi, group in groups2ext_query.items()
+        for k, v in get_assembly2reason(
+            groupi,
+            group,
+            contig2assembly=contig2assembly,
+            path_circular=path_circular,
+            failed_join_potential=failed_join_potential,
+        ).items()
+    }
     # for debug
-    with open(f"{working_dir}/COBRA_check_assembly_reason.tsv", "w") as results:
+    with open(working_dir / f"COBRA_check_assembly_reason.tsv", "w") as results:
         print("group", "reason", "query", "dups", sep="\t", file=results)
         for item in sorted(
             check_assembly_reason.items(), key=lambda x: (x[1][0], x[0])
         ):
             print(*item[1][:2], item[0], *item[1][2:], sep="\t", file=results)
 
-    log_info_2("Filtering paths accoring to COBRA rules.")
+    _log_info_2("Filtering paths accoring to COBRA rules.")
     failed_joins: dict[Literal["conflict", "circular_6", "nolink"], dict[str, int]] = {
         l: {  # type: ignore [misc]
             j: v[0]
             for v in check_assembly_reason.values()
             if v[1] == v1
-            for i in query2groups[v[0]]
+            for i in groups2ext_query[v[0]]
             for j in contig2assembly[i]
             if j in query_set
         }
@@ -1842,15 +1790,12 @@ def cobra(
         if i in check_assembly_reason
         and check_assembly_reason[i][1] == "circular_8_tight"
     }
-    print(
+    _log_info(
         *(
             "\t".join(
-                [
-                    *(compre_sets(pi - pj, li, lj) for pj, (j, lj) in enumerate(ll)),
-                    f"{i}",
-                ]
+                [*(compre_sets(pi - pj, li, lj) for pj, (j, lj) in enumerate(ll)), i]
             )
-            for ll in [
+            for ll in (
                 [
                     ("query_set", query_set),
                     ("orphan_end_query", orphan_end_query),
@@ -1860,21 +1805,20 @@ def cobra(
                     ),
                     ("self_circular", self_circular),
                     ("failed_join_potential", failed_join_potential),
-                    ("failed_join_nolink", failed_joins["nolink"].keys()),
-                    ("failed_join_conflict", failed_joins["conflict"].keys()),
-                    ("failed_join_circular_6", failed_joins["circular_6"].keys()),
+                    ("failed_join [nolink]", failed_joins["nolink"].keys()),
+                    ("failed_join [conflict]", failed_joins["conflict"].keys()),
+                    ("failed_join [circular_6]", failed_joins["circular_6"].keys()),
                     ("path_circular", path_circular),
                     ("checked_strict", checked_strict.keys()),
                     ("checked_strict_rep", checked_strict_rep.keys()),
                     ("assembly_rep", assembly_rep.keys()),
                     ("redundant_circular_8", redundant_circular_8.keys()),
                     ("failed_blast_half", failed_blast_half),
-                ]
-            ]
+                ],
+            )
             for pi, (i, li) in enumerate(ll)
         ),
         sep="\n",
-        file=log,
     )
 
     def check_check_assembly_reason():
@@ -1897,25 +1841,25 @@ def cobra(
 
         def check_query(query: str):
             print(
-                f"{query=}",
-                f"{query in query_set=}",
-                f"{contig2assembly.get(query)=}",
-                f"{check_assembly_reason.get(query)=}",
-                f"{query in path_circular=}",
-                f"{query in failed_join_potential=}",
-                f"{query in failed_joins['nolink']=}",
-                f"{query in failed_joins['conflict']=}",
+                f"{query                              =}",
+                f"{query in query_set                 =}",
+                f"{contig2assembly.get(query)         =}",
+                f"{check_assembly_reason.get(query)   =}",
+                f"{query in path_circular             =}",
+                f"{query in failed_join_potential     =}",
+                f"{query in failed_joins['nolink']    =}",
+                f"{query in failed_joins['conflict']  =}",
                 f"{query in failed_joins['circular_6']=}",
-                f"{query in checked_strict=}",
+                f"{query in checked_strict            =}",
                 sep="\n",
             )
-            print(query2groups.get(check_assembly_reason.get(query, [-1])[0]))
+            print(groups2ext_query.get(check_assembly_reason.get(query, [-1])[0]))
             print({i: contig2assembly.get(i) for i in contig2assembly.get(query)})
             print({i: check_assembly_reason.get(i) for i in contig2assembly.get(query)})
             print(
                 {
                     k: v
-                    for k, v in query2groups.items()
+                    for k, v in groups2ext_query.items()
                     if v.keys() & contig2assembly.get(query, {})
                 }
             )
@@ -1923,39 +1867,45 @@ def cobra(
         check_query("k141_10804945")
 
     # make blastn database and run search if the database is not empty
-    if (
-        (not checked_strict_rep)
-        and (not self_circular)
-        and (not self_circular_flexible_overlap)
-    ):
-        # Of course we assume that sequence is not empty!
-        print(
-            "no query was extended by COBRA, exit! "
-            "this is normal if you only provide few queries.",
-            file=log,
-            flush=True,
-        )
-        exit()
-
     ############################################################################
     ## Now output paths                                                       ##
     ############################################################################
-    log_info_3 = get_log_info(5, "2.3. Output extended paths and circulated paths", log)
-    ##
+    if not (checked_strict_rep or self_circular or self_circular_flexible_overlap):
+        # Of course we assume that sequence is not empty!
+        _log_info(
+            "no query was extended by COBRA, exit! "
+            "this is normal if you only provide few queries."
+        )
+        # region ugly touch output
+        with (
+            open(working_dir / f"COBRA_joining_summary.tsv", "w") as assembly_summary,
+            open(
+                working_dir / f"COBRA_category_ii-c_extended_failed_paths.tsv", "w"
+            ) as detail_failed,
+            open(working_dir / f"COBRA_mark_failed.tsv", "w") as mark_failed,
+        ):
+            pass
+        exit()
+
+    _log_info_3 = get_log_info(
+        5, "2.3. Output extended paths and circulated paths", logfile
+    )
     # save the joining details information
-    log_info_3(
+    _log_info_3(
         'Getting the joining details of unique "extended_circular" and "extended_partial" query contigs.'
     )
     with (
         open(
-            f"{working_dir}/COBRA_category_ii-a_extended_circular_unique_joining_details.tsv",
+            working_dir
+            / f"COBRA_category_ii-a_extended_circular_unique_joining_details.tsv",
             "w",
         ) as detail_circular,
         open(
-            f"{working_dir}/COBRA_category_ii-b_extended_partial_unique_joining_details.tsv",
+            working_dir
+            / f"COBRA_category_ii-b_extended_partial_unique_joining_details.tsv",
             "w",
         ) as detail_partial,
-        open(f"{working_dir}/COBRA_joining_summary.tsv", "w") as assembly_summary,
+        open(working_dir / f"COBRA_joining_summary.tsv", "w") as assembly_summary,
     ):
         joining_detail_headers = [
             *("Final_Seq_ID", "Joined_Len", "Status"),
@@ -1969,18 +1919,7 @@ def cobra(
             str,
             tuple[
                 tuple[str, int, Literal["Circular", "Partial"]],
-                list[
-                    tuple[
-                        str,
-                        Literal["forward", "reverse"],
-                        int,
-                        int,
-                        int,
-                        float,
-                        float,
-                        str,
-                    ]
-                ],
+                list[T_JOIN_DETAIL],
             ],
         ] = {}
         for query in tqdm(
@@ -1997,21 +1936,21 @@ def cobra(
             for item in query2path[query]:
                 contig = contig_name(item)
                 if (direction := get_direction(item)) == "forward":
-                    contig_start_end = (site, site + header2len[contig] - 1)
+                    contig_start_end = (site, site + contig2len[contig] - 1)
                 else:
-                    contig_start_end = (site, site + header2len[contig] - 1)
+                    contig_start_end = (site, site + contig2len[contig] - 1)
                 contig2join_details[query][1].append(
                     (
                         contig,
                         direction,
-                        header2len[contig],
+                        contig2len[contig],
                         *contig_start_end,
                         cov[contig],
-                        round(GC(header2seq[contig]), 3),
+                        round(GC(contig2seq[contig]), 3),
                         contig2join_reason[query][contig],
                     )
                 )
-                site += header2len[contig] - maxk_length
+                site += contig2len[contig] - maxk
 
         print(
             *("Query_Seq_ID", "Query_Seq_Len"),
@@ -2030,7 +1969,7 @@ def cobra(
                 )
             for contig in sorted(contig2assembly[query] & query_set):
                 print(
-                    *(contig, header2len[contig]),
+                    *(contig, contig2len[contig]),
                     *contig2join_details[query][0],
                     checked_strict_rep[query],
                     query2stat[query].query_count,
@@ -2039,9 +1978,9 @@ def cobra(
                     file=assembly_summary,
                 )
 
-    log_info_3("Getting the joining details of failed query contigs.")
+    _log_info_3("Getting the joining details of failed query contigs.")
     with open(
-        f"{working_dir}/COBRA_category_ii-c_extended_failed_paths.tsv", "w"
+        working_dir / f"COBRA_category_ii-c_extended_failed_paths.tsv", "w"
     ) as detail_failed:
         print(
             *("Group_Status", "Group_Id"),
@@ -2054,16 +1993,27 @@ def cobra(
             for groupi in sorted(
                 set(failed_joins[failed_reason].values()) - reported_failed_groups  # type: ignore[index]
             ):
-                for query in sorted(query2groups[groupi].keys()):
-                    for contig in query2groups[groupi][query][1] or {query}:
-                        print(
-                            *(failed_reason, groupi, query),
-                            check_assembly_reason.get(query, ("", "redundant"))[1],
-                            len(query2extension[query][0]) - query2extension[query][2],
-                            " ".join(query2path[query]),
-                            sep="\t",
-                            file=detail_failed,
-                        )
+                for query in sorted(groups2ext_query[groupi].keys()):
+                    for contig in groups2ext_query[groupi][query][1] or {query}:
+                        if contig in failed_join_potential:
+                            print(
+                                *(failed_reason, groupi, query),
+                                check_assembly_reason.get(query, ("", "redundant"))[1],
+                                contig2len[query],
+                                "",
+                                sep="\t",
+                                file=detail_failed,
+                            )
+                        else:
+                            print(
+                                *(failed_reason, groupi, query),
+                                check_assembly_reason.get(query, ("", "redundant"))[1],
+                                len(query2extension[query][0])
+                                - query2extension[query][2],
+                                " ".join(query2path[query]),
+                                sep="\t",
+                                file=detail_failed,
+                            )
                 reported_failed_groups.add(groupi)
         for groupi, rep_query in sorted(
             (v[0], k)
@@ -2076,17 +2026,27 @@ def cobra(
             # now not failed by assembly, so just search "standalone" and "longest"
             for query in (
                 contig
-                for query in sorted(query2groups[groupi])
-                for contig in sorted(query2groups[groupi][query][1] or {query})
+                for query in sorted(groups2ext_query[groupi])
+                for contig in sorted(groups2ext_query[groupi][query][1] or {query})
             ):
-                print(
-                    *("blast_half", groupi, query),
-                    check_assembly_reason[rep_query][1],
-                    len(query2extension[query][0]) - query2extension[query][2],
-                    " ".join(query2path[query]),
-                    sep="\t",
-                    file=detail_failed,
-                )
+                if contig in failed_join_potential:
+                    print(
+                        *("blast_half", groupi, query),
+                        check_assembly_reason[rep_query][1],
+                        contig2len[query],
+                        "",
+                        sep="\t",
+                        file=detail_failed,
+                    )
+                else:
+                    print(
+                        *("blast_half", groupi, query),
+                        check_assembly_reason[rep_query][1],
+                        len(query2extension[query][0]) - query2extension[query][2],
+                        " ".join(query2path[query]),
+                        sep="\t",
+                        file=detail_failed,
+                    )
             reported_failed_groups.add(groupi)
         for groupi, rep_query in sorted(
             (v[0], k)
@@ -2105,23 +2065,30 @@ def cobra(
                     for contig in contig2assembly[query]
                 }
             ):
-                print(
-                    *("circular_8", groupi, query),
-                    check_assembly_reason[rep_query][1],
-                    len(query2extension[query][0]) - query2extension[query][2],
-                    " ".join(query2path[query]),
-                    sep="\t",
-                    file=detail_failed,
-                )
+                if contig in failed_join_potential:
+                    print(
+                        *("circular_8", groupi, query),
+                        check_assembly_reason[rep_query][1],
+                        contig2len[query],
+                        "",
+                        sep="\t",
+                        file=detail_failed,
+                    )
+                else:
+                    print(
+                        *("circular_8", groupi, query),
+                        check_assembly_reason[rep_query][1],
+                        len(query2extension[query][0]) - query2extension[query][2],
+                        " ".join(query2path[query]),
+                        sep="\t",
+                        file=detail_failed,
+                    )
 
-    ##
     # save the joining summary information
-    ##
     # save the joining status information of each query
-    log_info_3("Saving joining status of all query contigs.")
-    assembled_info = open(
-        f"{working_dir}/COBRA_joining_status.tsv", "w"
-    )  # shows the COBRA status of each query
+    _log_info_3("Saving joining status of all query contigs.")
+    assembled_info = open(working_dir / f"COBRA_joining_status.tsv", "w")
+    # shows the COBRA status of each query
     print(
         *("SeqID", "Length", "Coverage", "GC", "Group_Id", "Status", "Category"),
         sep="\t",
@@ -2142,7 +2109,7 @@ def cobra(
     extended_fa_names = {}
     for ab, label in (("a", "extended_circular"), ("b", "extended_partial")):
         with open(
-            f"{working_dir}/COBRA_category_ii-{ab}_{label}_unique.fa", "w"
+            working_dir / f"COBRA_category_ii-{ab}_{label}_unique.fa", "w"
         ) as extended_fasta:
             for query in sorted(checked_strict_rep):
                 if query2extension[query][1] == label:
@@ -2155,9 +2122,9 @@ def cobra(
                         query_counts[label] += 1
                         print(
                             contig,
-                            header2len[contig],
+                            contig2len[contig],
                             cov[contig],
-                            round(GC(header2seq[contig_name(contig)]), 3),
+                            round(GC(contig2seq[contig_name(contig)]), 3),
                             checked_strict_rep[query],
                             label,
                             f"category_ii-{ab}",
@@ -2165,10 +2132,9 @@ def cobra(
                             file=assembled_info,
                         )
         extended_fa_names[label] = extended_fasta
-
     # for those cannot be extended
     with open(
-        f"{working_dir}/COBRA_category_ii-c_extended_failed.fa", "w"
+        working_dir / f"COBRA_category_ii-c_extended_failed.fa", "w"
     ) as failed_join:
         label = "extended_failed"
         for query in sorted(failed_join_list):
@@ -2176,30 +2142,29 @@ def cobra(
             # assert query not in extended_circular_query
             # assert query not in extended_partial_query
             # assert query not in orphan_end_query
-            print(f">{query}\n{header2seq[query]}", file=failed_join)
+            print(f">{query}\n{contig2seq[query]}", file=failed_join)
             print(
                 query,
-                header2len[query],
+                contig2len[query],
                 cov[query],
-                round(GC(header2seq[contig_name(query)]), 3),
+                round(GC(contig2seq[contig_name(query)]), 3),
                 "",
                 "extended_failed",
                 "category_ii-c",
                 sep="\t",
                 file=assembled_info,
             )
-
     # for those due to orphan end
-    with open(f"{working_dir}/COBRA_category_iii_orphan_end.fa", "w") as orphan_end:
+    with open(working_dir / f"COBRA_category_iii_orphan_end.fa", "w") as orphan_end:
         label = "orphan_end"
         for query in sorted(orphan_end_query):
             query_counts[label] += 1
-            print(f">{query}\n{header2seq[query]}", file=orphan_end)
+            print(f">{query}\n{contig2seq[query]}", file=orphan_end)
             print(
                 query,
-                header2len[query],
+                contig2len[query],
                 cov[query],
-                round(GC(header2seq[contig_name(query)]), 3),
+                round(GC(contig2seq[contig_name(query)]), 3),
                 "",
                 label,
                 "category_iii",
@@ -2208,19 +2173,19 @@ def cobra(
             )
 
     # for self circular
-    log_info_3("Saving self_circular contigs.")
+    _log_info_3("Saving self_circular contigs.")
     with open(
-        f"{working_dir}/COBRA_category_i_self_circular.fa", "w"
+        working_dir / f"COBRA_category_i_self_circular.fa", "w"
     ) as circular_fasta:
         label = "self_circular"
         for query in sorted(self_circular):
             query_counts[label] += 1
-            print(f">{query}_self_circular\n{header2seq[query]}", file=circular_fasta)
+            print(f">{query}_self_circular\n{contig2seq[query]}", file=circular_fasta)
             print(
                 query,
-                header2len[query] - maxk_length,
+                contig2len[query] - maxk,
                 cov[query],
-                round(GC(header2seq[contig_name(query)]), 3),
+                round(GC(contig2seq[contig_name(query)]), 3),
                 "",
                 label,
                 "category_i",
@@ -2229,12 +2194,12 @@ def cobra(
             )
         for query in sorted(self_circular_flexible_overlap):
             query_counts[label] += 1
-            print(f">{query}_self_circular\n{header2seq[query]}", file=circular_fasta)
+            print(f">{query}_self_circular\n{contig2seq[query]}", file=circular_fasta)
             print(
                 query,
-                header2len[query] - self_circular_flexible_overlap[query],
+                contig2len[query] - self_circular_flexible_overlap[query],
                 cov[query],
-                round(GC(header2seq[contig_name(query)]), 3),
+                round(GC(contig2seq[contig_name(query)]), 3),
                 "",
                 label,
                 "category_i",
@@ -2252,32 +2217,28 @@ def cobra(
     ):
         summary_fasta(
             outio.name,
-            maxk_length,
+            maxk,
             cov=cov,
             self_circular=self_circular,
             self_circular_flexible_overlap=self_circular_flexible_overlap,
         )
 
-    ##
     # save new fasta file with all the others used in joining replaced by COBRA sequences excepting self_circular ones
-    log_info_3("Saving the new fasta file.")
+    _log_info_3("Saving the new fasta file.")
     query_extension_used = {
         contig: query
         for query in checked_strict_rep
         for contig in contig2assembly[query]
     }
-    with open(f"{working_dir}/{assem_fa.rsplit('/', 1)[-1]}.new.fa", "w") as new:
-        for header in sorted(header2seq.keys() - query_extension_used.keys()):
-            print(f">{header}\n{header2seq[header]}", file=new)
+    with open(working_dir / f"{assem_fa.name}.new.fa", "w") as new:
+        for header in sorted(contig2seq.keys() - query_extension_used.keys()):
+            print(f">{header}\n{contig2seq[header]}", file=new)
     os.system(
         f"cat {extended_fa_names['extended_circular'].name} {extended_fa_names['extended_partial'].name} >> {new.name}"
     )
-    ##
-    # intermediate files
 
-    ##
     # write the numbers to the log file
-    print(
+    _log_info(
         "\n",
         "3. RESULTS SUMMARY",
         f"# Total queries: {len(query_set)}",
@@ -2289,27 +2250,47 @@ def cobra(
         '# Check "COBRA_joining_status.tsv" for joining status of each query.',
         '# Check "COBRA_joining_summary.tsv" for joining details of "extended_circular" and "extended_partial" queries.',
         sep="\n",
-        file=log,
-        flush=True,
     )
-    log.close()
 
 
 def main():
     args = parse_args()
-    cobra(
-        query_fa=args.query,
-        assem_fa=args.fasta,
-        mapping_file=args.mapping,
-        coverage_file=args.coverage,
-        maxk=args.maxk,
-        mink=args.mink,
-        assembler=args.assembler,
-        trim_readno=args.trim_readno,
-        outdir=args.output,
-        linkage_mismatch=args.linkage_mismatch,
-        threads=args.threads,
-    )
+    # get information from the input files and parameters and save information
+    # get the name of the whole contigs fasta file
+    # folder of output
+    query_fa = Path(args.query)
+    working_dir = Path(args.output) if args.output else Path(f"{query_fa.name}_COBRA")
+    ##
+    # get information from the input files and parameters and save information
+    # get the name of the whole contigs fasta file
+    # folder of output
+    # checking if output folder exists
+    if working_dir.exists():
+        raise FileExistsError(f"Output folder <{working_dir}> exists, please check.")
+    else:
+        working_dir.mkdir(parents=True)
+    # determine the length of overlap based on assembler and the largest kmer size
+    maxk = args.maxk - 1 if args.assembler == "idba" else args.maxk
+    # determine potential self_circular contigs from contigs with orphan end
+    mink = args.mink - 1 if args.assembler == "idba" else args.mink
+    with (
+        open(working_dir / f"log", "w") as logfile,
+        open(working_dir / f"debug.txt", "w") as debugfile,
+    ):
+        cobra(
+            query_fa=query_fa,
+            assem_fa=Path(args.fasta),
+            mapping_file=Path(args.mapping),
+            coverage_file=Path(args.coverage),
+            maxk=maxk,
+            mink=mink,
+            trim_readno=args.trim_readno,
+            working_dir=working_dir,
+            linkage_mismatch=args.linkage_mismatch,
+            threads=args.threads,
+            logfile=logfile,
+            debugfile=debugfile,
+        )
 
 
 if __name__ == "__main__":
