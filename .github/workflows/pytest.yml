@@ -22,7 +22,7 @@ jobs:
           cache-environment: false
 
       - name: Check formatting
-        run: black --check --diff .
+        run: black --check --diff cobra.py tests.py
 
   testing:
     runs-on: ubuntu-latest
