@@ -12,9 +12,10 @@ import itertools
 import os
 from collections import defaultdict
 from pathlib import Path
+import pickle
 import sys
 from time import strftime
-from typing import Callable, Iterable, Literal, NamedTuple, TextIO, TypeVar
+from typing import Callable, Iterable, KeysView, Literal, NamedTuple, TextIO, TypeVar
 
 import pandas as pd
 import pysam
@@ -1102,6 +1103,11 @@ def get_failed_blast_half(outfile: str):
     )
 
 
+class GroupAssemblyIndex(NamedTuple):
+    special: frozenset[str]
+    dup_queries: frozenset[str]
+
+
 def query2groups(contig2assembly: dict[str, set[str]], query_set: frozenset[str]):
     """
     group all query paths if they shared paths
@@ -1115,10 +1121,10 @@ def query2groups(contig2assembly: dict[str, set[str]], query_set: frozenset[str]
       [query]          ^- dup of k141_1 (contig in path)
 
     Yield: {
-        # keys | special contigs                    | query contigs
-        k141_1: (frozenset(k141_1)                , frozenset()),
-        k141_2: (frozenset(k141_1, k141_3)        , frozenset(k141_2, k141_3)),
-        k141_4: (frozenset(k141_1        , k141_4), frozenset()),
+        # keys                     | special contigs                  | other query contigs
+        k141_1: GroupAssemblyIndex(frozenset(k141_1)                , frozenset()),
+        k141_2: GroupAssemblyIndex(frozenset(k141_1, k141_3)        , frozenset(k141_2, k141_3)),
+        k141_4: GroupAssemblyIndex(frozenset(k141_1        , k141_4), frozenset()),
     }
     """
     uassembly2contg = (
@@ -1166,30 +1172,184 @@ def query2groups(contig2assembly: dict[str, set[str]], query_set: frozenset[str]
     )
     for group in set(query2groups_.values()):
         yield {
-            query: (v["assembly"], v["index"] if len(v["index"]) > 1 else frozenset())
+            query: GroupAssemblyIndex(
+                v["assembly"], v["index"] if len(v["index"]) > 1 else frozenset()
+            )
             for query in group
             for v in [ucontig2assembly.get(query)]
             if v is not None
         }
 
 
-ASSEM_REASONS = Literal[
-    "standalone",
-    "conflict_query",
-    "circular_in_sub",
-    "circular_6_conflict",
-    "circular_8_tight",
-    "nolink_query",
-    "longest",
-]
+def group_this2feature(
+    this: str,
+    group: dict[str, GroupAssemblyIndex],
+    subset_trunks: set[str] | KeysView[str],
+    subset_unextendable: set[str] | KeysView[str],
+):
+    this_feature: dict[
+        Literal["has_disjoint_found", "is_subset_of", "has_disjoint", "sub_standalong"],
+        list[str],
+    ] = {}
+    ## first, compare this query to previous checked queries
+    for frag in subset_trunks | subset_unextendable:
+        if not group[frag].special & group[this].special:
+            # there is no common sequence between this and frag, so they are disjoint
+            # e.g.
+            #    k141_2: [k141_1, k141_3]         |
+            #    k141_5: [              , k141_4] | + wait to create new item
+            this_feature.setdefault("sub_standalong", []).append(frag)
+            # else we shouhd check their relationship
+        elif frag in subset_unextendable:
+            this_feature.setdefault("has_disjoint_found", []).append(frag)
+        elif group[frag].special < group[this].special:
+            # as sorted, group[frag].special never greater than group[this].special
+            # e.g.
+            #    k141_1: [k141_1]                 |
+            #    k141_2: [k141_1, k141_3]         | *+ update longer
+            this_feature.setdefault("is_subset_of", []).append(frag)
+        else:
+            assert (
+                not group[frag].special >= group[this].special
+            ), "must be uniq and smaller group first"
+            # assert frag in subset_trunks
+            # e.g.
+            #    k141_1: [k141_1]                 | keep
+            #    k141_2: [k141_1, k141_3]         | - discard
+            #    k141_4: [k141_1        , k141_4] | - discard
+            this_feature.setdefault("has_disjoint", []).append(frag)
+    return this_feature
+
+
+class AssemblyReason(NamedTuple):
+    groupid: int
+    judgement: Literal[
+        "standalone",
+        "conflict_query",
+        "circular_in_sub",
+        "circular_6_conflict",
+        "circular_8_tight",
+        "nolink_query",
+        "longest",
+    ]
+    represent_seqs: list[str]
+    dup_queries: frozenset[str]
+
+
+class SubsetChunk(NamedTuple):
+    standalong_subs: dict[str, "SubsetChunk"]
+    frags: list[str]
+
+
+def _get_subset_trunks(groupi: int, group: dict[str, GroupAssemblyIndex]):
+    this, *subsets = sorted(group, key=lambda q: len(group[q].special))
+    subset_trunks: dict[str, SubsetChunk] = {this: SubsetChunk({}, [this])}
+    # the query in subset_trunks can not be extended,
+    #  those contains query should be put in subset_unextendable[query]
+    subset_unextendable: dict[str, set[str]] = {}
+    check_assembly_reason: dict[str, AssemblyReason] = {}
+    # assert all(i == v[-1] for i, v in subset_trunks.items())
+    #        and values in v is sorted subset.
+    while subsets:
+        # start from the shortest path
+        this = subsets.pop(0)
+        this_feature = group_this2feature(
+            this, group, subset_trunks.keys(), subset_unextendable.keys()
+        )
+        if "has_disjoint" in this_feature:
+            # all things in this_feature["has_disjoint"], this_feature["is_subset_of"] and [this]
+            #  cannot be extended, and should be reported as `conflict_query`
+            # e.g.
+            #    k141_1: [k141_1, k141_3]                 |
+            #    k141_3: [      , k141_3,       ]         | *- revert item
+            #    k141_5: [      , k141_3, k141_4]         |
+            subset_unextendable[this] = {this}
+            check_assembly_reason[this] = AssemblyReason(
+                groupi,
+                "conflict_query",
+                this_feature["has_disjoint"],
+                group[this].dup_queries,
+            )
+            disjoints = set(this_feature["has_disjoint"])
+            while disjoints:
+                frag = disjoints.pop()
+                frags = subset_trunks[frag].frags
+                # --- |       [  keep  ] if any
+                # ----|--     [disjoint] frag
+                #     |xxxxxx [disjoint] this
+                # find the not-conflict one
+                for fragi in range(len(frags)):
+                    is_intersect = group[frags[fragi]].special & group[this].special
+                    is_smaller = group[frags[fragi]].special < group[this].special
+                    if is_intersect and not is_smaller:
+                        break
+                if fragi:
+                    # Aha, as already assert len(frags) >= 1,
+                    # here we assert len(frags) >= 2, and at least frags[0] is the common subset
+                    # so we rsecue the common subset
+                    subset_trunks[frags[fragi - 1]] = SubsetChunk(
+                        subset_trunks.pop(frag).standalong_subs, frags[:fragi]
+                    )
+                    subset_unextendable[frags[fragi - 1]] = set(frags[fragi:])
+                elif not subset_trunks.pop(frag).standalong_subs:
+                    # all query in the extention failed
+                    subset_unextendable[frag] = {frag}
+                else:
+                    # we should check those in .sdandalong_subs as well
+                    disjoints.update(subset_trunks.pop(frag).standalong_subs)
+                # frozen it, or record in because this common subset cannot be bigger
+                check_assembly_reason[frags[-1]] = AssemblyReason(
+                    groupi,
+                    f"conflict_query",
+                    frags[fragi:],
+                    group[frags[-1]].dup_queries,
+                )
+        elif "has_disjoint_found" in this_feature:
+            check_assembly_reason[this] = AssemblyReason(
+                groupi,
+                "conflict_query",
+                this_feature["has_disjoint_found"],
+                group[this].dup_queries,
+            )
+            for frag in this_feature["has_disjoint_found"]:
+                subset_unextendable[frag].add(this)
+        elif "is_subset_of" in this_feature:
+            if len(frags := this_feature["is_subset_of"]) == 1:
+                # e.g.
+                #    k141_1: [k141_1]                 |
+                #    k141_6: [k141_1, k141_4]         | *+ update longer
+                subset_trunks[this] = subset_trunks.pop(frags[0])
+                subset_trunks[this].frags.append(this)
+            else:
+                # e.g.
+                #    k141_1: [k141_1]                 |
+                #    k141_5: [      , k141_4]         |
+                #    k141_6: [k141_1, k141_4]         | + select and create new item
+                subset_trunks[this] = SubsetChunk(
+                    {x: subset_trunks.pop(x) for x in frags}, [this]
+                )
+        else:  # if set(this_feature) == {"sub_standalong"}:
+            # k141_5: [k141_4]                 | + create new item
+            subset_trunks[this] = SubsetChunk({}, [this])
+        # print(
+        #    f"{this=}\n"
+        #    f"{this_feature=}\n"
+        #    f"{subset_trunks=}\n"
+        #    f"{subset_unextendable=}\n"
+        # )
+    return (
+        subset_trunks,
+        {i for k in subset_unextendable.values() for i in k},
+        check_assembly_reason,
+    )
 
 
 def get_assembly2reason(
     groupi: int,
-    group: dict[str, tuple[frozenset[str], frozenset[str] | frozenset]],
+    group: dict[str, GroupAssemblyIndex],
     contig2assembly: dict[str, set[str]],
     path_circular_potential: frozenset[str],
-    failed_join_potential: frozenset[str],
+    contig_link_no_pe: frozenset[str],
 ):
     """
     check query in each group, and report as a dict
@@ -1202,131 +1362,18 @@ def get_assembly2reason(
             frozenset(path with all the same query)
         )
     """
-    check_assembly_reason: dict[
-        str, tuple[int, ASSEM_REASONS, list[str], frozenset[str]]
-    ] = {}
-    # group: rep_query: {rep_query in the path}
-    this, *subsets = sorted(group, key=lambda q: len(group[q][0]))
-    if not subsets:
-        return {this: (groupi, "standalone", [], group[this][1])}
-    subset_trunks: dict[str, tuple[list[str], list[str]]] = {this: ([], [this])}
-    subset_unextendable: dict[str, set[str]] = {}
-    # assert all(i == v[-1] for i, v in subset_trunks.items())
-    #        and values in v is sorted subset.
+    if len(group) == 1:
+        for this in group:
+            return {
+                this: AssemblyReason(groupi, "standalone", [], group[this].dup_queries)
+            }
+    check_assembly_reason: dict[str, AssemblyReason] = {}
+    subset_trunks, _unextendable, _failed_reason = _get_subset_trunks(groupi, group)
+    check_assembly_reason.update(_failed_reason)
+    subsets = subset_trunks.keys() - _unextendable
     while subsets:
-        # start from the shortest path
-        this = subsets.pop(0)
-        this_feature: dict[
-            Literal[
-                "has_disjoint_found",
-                "is_subset_of",
-                "has_disjoint",
-                "sub_standalong",
-            ],
-            list[str],
-        ] = {}
-        for frag in subset_trunks | subset_unextendable.keys():
-            if group[frag][0] & group[this][0]:
-                if group[frag][0] < group[this][0]:
-                    # k141_1: [k141_1]                 |
-                    # k141_2: [k141_1, k141_3]         | *+ update longer
-                    #
-                    if frag in subset_unextendable:
-                        this_feature.setdefault("has_disjoint_found", []).append(frag)
-                    else:
-                        this_feature.setdefault("is_subset_of", []).append(frag)
-                elif group[frag][0] == group[this][0]:
-                    assert False, "must be dereped previously"
-                elif frag in subset_trunks:
-                    # k141_1: [k141_1]                 | keep
-                    # k141_2: [k141_1, k141_3]         | - discard
-                    # k141_4: [k141_1        , k141_4] | - discard
-                    #
-                    this_feature.setdefault("has_disjoint", []).append(frag)
-                elif frag in subset_unextendable:
-                    this_feature.setdefault("has_disjoint_found", []).append(frag)
-                # else frag already has been captured by a subset_cannot_extend,
-                # or totally the same of something
-            else:
-                # k141_2: [k141_1, k141_3]         |
-                # k141_5: [              , k141_4] | + wait to create new item
-                #
-                this_feature.setdefault("sub_standalong", []).append(frag)
-        if "has_disjoint" in this_feature:
-            check_assembly_reason[this] = (
-                groupi,
-                "conflict_query",
-                this_feature["has_disjoint"],
-                group[this][1],
-            )
-            for frag in this_feature["has_disjoint"] + this_feature.get(
-                "is_subset_of", []
-            ):
-                # k141_1: [k141_1, k141_3]                 |
-                # k141_3: [      , k141_3,       ]         | *- revert item
-                # k141_5: [      , k141_3, k141_4]         |
-                #
-                frags = subset_trunks[frag][1]
-                # find the not-conflict one
-                for fragi in range(len(frags)):
-                    if (group[frags[fragi]][0] < group[this][0]) or not group[
-                        frags[fragi]
-                    ][0] & group[this][0]:
-                        pass
-                    else:
-                        break
-                if fragi:
-                    # common subset found
-                    subset_trunks[frags[fragi - 1]] = (
-                        subset_trunks.pop(frag)[0],
-                        frags[:fragi],
-                    )
-                else:
-                    subset_trunks.pop(frag)
-                    subset_unextendable[this] = {this}
-                # frozen it, or record in because this common subset cannot be bigger
-                subset_unextendable[frags[max(fragi - 1, 0)]] = set(frags[fragi:])
-                check_assembly_reason[frags[-1]] = (
-                    groupi,
-                    f"conflict_query",
-                    frags[fragi:],
-                    group[frags[-1]][1],
-                )
-        elif "has_disjoint_found" in this_feature:
-            check_assembly_reason[this] = (
-                groupi,
-                "conflict_query",
-                this_feature["has_disjoint_found"],
-                group[this][1],
-            )
-            for frag in this_feature["has_disjoint_found"]:
-                subset_unextendable[frag].add(this)
-        elif "is_subset_of" in this_feature:
-            if len(frags := this_feature["is_subset_of"]) == 1:
-                # k141_1: [k141_1]                 |
-                # k141_6: [k141_1, k141_4]         | *+ update longer
-                #
-                subset_trunks[frags[0]][1].append(this)
-                subset_trunks[this] = subset_trunks.pop(frags[0])
-            else:
-                # k141_1: [k141_1]                 |
-                # k141_5: [      , k141_4]         |
-                # k141_6: [k141_1, k141_4]         | + select and create new item
-                #
-                standalong_subs = {x for x in frags for y in frags if x < y}
-                subset_trunks[this] = sorted(
-                    i for i in frags if i not in standalong_subs
-                ), [this]
-        else:  # if set(this_feature) == {"sub_standalong"}:
-            # k141_5: [k141_4]                 | + create new item
-            subset_trunks[this] = [], [this]
-        # print(
-        #    f"{this=}\n"
-        #    f"{this_feature=}\n"
-        #    f"{subset_trunks=}\n"
-        #    f"{subset_unextendable=}\n"
-        # )
-    for subset in subset_trunks - subset_unextendable.keys():
+        subset = subsets.pop()
+        frags = subset_trunks[subset].frags[:]
         # subset          = [k141_1, k141_2, k141_3, k141_4]
         # subset_circular = [      , k141_2,       , k141_4]
         #  k141_1: 1 | not circular                              | * keep if k141_3 in k141_2
@@ -1334,30 +1381,46 @@ def get_assembly2reason(
         #  k141_3: 6 | not circular but with a circular inside   |
         #  k141_4: 8 | circular and with another circular inside |
         #
-        frags = list(subset_trunks[subset][1])
-        if any(i for i in subset_trunks[subset][0] if i in path_circular_potential):
+        if any(
+            i
+            for i in subset_trunks[subset].standalong_subs
+            if i in path_circular_potential
+        ):
             # all the contig assemblies are based on another assembly,
             # which is already circular and considered in another iter of this for-loop
-            check_assembly_reason[subset] = (
+            check_assembly_reason[subset] = AssemblyReason(
                 groupi,
                 "circular_in_sub",
                 frags,
-                group[subset][1],
+                group[subset].dup_queries,
             )
+            subsets.update(subset_trunks[subset].standalong_subs)
         else:
-            subset_circular = [
-                i for i in subset_trunks[subset][1] if i in path_circular_potential
-            ]
+            subset_circular = [i for i in frags if i in path_circular_potential]
             while (
                 subset_circular
                 and frags
                 # confirm potential `6` to speed up
                 and subset_circular[-1] != frags[-1]
             ):
+                arm_contigs = (
+                    contig2assembly[frags[-1]] - contig2assembly[subset_circular[-1]]
+                )
+                # if arm_contigs & contig_link_no_pe:
+                #    # just drop and ignore it?
+                #    frag = frags[-1]
+                #    check_assembly_reason[frag] = AssemblyReason(
+                #        groupi,
+                #        "nolink_query",
+                #        frags[frags.index(frag) :],
+                #        group[frag].dup_queries,
+                #    )
+                #    frags = frags[: frags.index(frag)]
+                # el...
                 if (
-                    arg_contigs := contig2assembly[frags[-1]]
-                    - contig2assembly[subset_circular[-1]]
-                ) & (contig2assembly.keys()) or arg_contigs & failed_join_potential:
+                    arm_contigs & contig2assembly.keys()
+                    or arm_contigs & contig_link_no_pe
+                ):
                     # if contig < contig_1
                     # and contig_1 is not circular
                     # and contig_1 at the arm of `6`
@@ -1371,48 +1434,50 @@ def get_assembly2reason(
                     #
                     # if so, remove the biggest `6`
                     frag = subset_circular[-1]
-                    check_assembly_reason[frag] = (
+                    check_assembly_reason[frag] = AssemblyReason(
                         groupi,
                         "circular_6_conflict",
                         frags[frags.index(frag) :],
-                        group[frag][1],
+                        group[frag].dup_queries,
                     )
                     # (next check for extensions on smaller circle)
                     frags = frags[: frags.index(frag)]
+                    subset_circular = [i for i in frags if i in path_circular_potential]
                 else:  # if subset_circular and subset_circular[0] != frags[-1]:
                     # check if any extension on the smallest `0`
                     # if so, any `6` will be considered as part of the biggest `8`
                     # and `8` is tightened as the smallest `0`
                     frag = frags[-1]
-                    check_assembly_reason[frag] = (
+                    check_assembly_reason[frag] = AssemblyReason(
                         groupi,
                         "circular_8_tight",
                         frags[frags.index(frag) :],
-                        group[frag][1],
+                        group[frag].dup_queries,
                     )
                     frags = frags[: frags.index(subset_circular[0]) + 1]
                     # assert subset_circular[0] != frags[-1], "expected break the while-loop"
+                    # must end the while-loop
             if frags:
                 # remove query contigs that cannot extend itself
                 this = ""
                 for frag in frags:
-                    if contig2assembly[frag] & failed_join_potential:
+                    if contig2assembly[frag] & contig_link_no_pe:
                         this = frag
                         break
                 if this:
-                    check_assembly_reason[frags[-1]] = (
+                    check_assembly_reason[frags[-1]] = AssemblyReason(
                         groupi,
                         "nolink_query",
                         frags[frags.index(frag) :],
-                        group[frags[-1]][1],
+                        group[frags[-1]].dup_queries,
                     )
                     frags = frags[: frags.index(frag)]
                 if frags:
-                    check_assembly_reason[frags[-1]] = (
+                    check_assembly_reason[frags[-1]] = AssemblyReason(
                         groupi,
                         "longest",
                         frags,
-                        group[frags[-1]][1],
+                        group[frags[-1]].dup_queries,
                     )
     return check_assembly_reason
 
@@ -1564,8 +1629,8 @@ def cobra(
     for k in sorted(contig2assembly):
         _log_debug(k, sorted(contig2assembly[k]))
 
-    # overlap found, but not supported by reads linkage
-    failed_join_potential = frozenset(
+    # overlap found, but none end supported by reads linkage
+    contig_link_no_pe = frozenset(
         contig
         for contig in query_set
         if (
@@ -1575,8 +1640,8 @@ def cobra(
             and len(contig2join[contig + "_R"]) == 0
         )
     )
-    _log_debug("# failed_join_potential")
-    _log_debug(sorted(failed_join_potential))
+    _log_debug("# contig_link_no_pe")
+    _log_debug(sorted(contig_link_no_pe))
 
     # get the joining order of contigs, seems to be super of `contig2assembly`
     query2path = {
@@ -1585,7 +1650,7 @@ def cobra(
             contig2join=contig2join,
             path_circular_end=path_circular_end,
         )
-        for _querys in (contig2assembly, failed_join_potential)
+        for _querys in (contig2assembly, contig_link_no_pe)
         for query in _querys
     }
 
@@ -1651,7 +1716,7 @@ def cobra(
             group,
             contig2assembly=contig2assembly,
             path_circular_potential=path_circular_potential,
-            failed_join_potential=failed_join_potential,
+            contig_link_no_pe=contig_link_no_pe,
         ).items()
     }
     # for debug
@@ -1734,7 +1799,7 @@ def cobra(
                         self_circular_flex.keys(),
                     ),
                     ("self_circular", self_circular),
-                    ("failed_join_potential", failed_join_potential),
+                    ("contig_link_no_pe", contig_link_no_pe),
                     ("failed_join [nolink]", failed_joins["nolink"].keys()),
                     ("failed_join [conflict]", failed_joins["conflict"].keys()),
                     ("failed_join [circular_6]", failed_joins["circular_6"].keys()),
@@ -1755,9 +1820,9 @@ def cobra(
 
     def check_check_assembly_reason():
         assert query_set - orphan_pre_set == (
-            query_set | failed_join_potential | failed_join_list | checked_strict.keys()
+            query_set | contig_link_no_pe | failed_join_list | checked_strict.keys()
         )
-        assert not checked_strict.keys() & failed_join_potential
+        assert not checked_strict.keys() & contig_link_no_pe
         assert not checked_strict.keys() & failed_joins["nolink"].keys()
         assert not checked_strict.keys() & failed_joins["conflict"].keys()
         assert not checked_strict.keys() & failed_joins["circular_6"].keys()
@@ -1778,7 +1843,7 @@ def cobra(
                 f"{contig2assembly.get(query)         =}",
                 f"{check_assembly_reason.get(query)   =}",
                 f"{query in path_circular_potential             =}",
-                f"{query in failed_join_potential     =}",
+                f"{query in contig_link_no_pe     =}",
                 f"{query in failed_joins['nolink']    =}",
                 f"{query in failed_joins['conflict']  =}",
                 f"{query in failed_joins['circular_6']=}",
@@ -1859,7 +1924,7 @@ def cobra(
             ):
                 for query in sorted(groups2ext_query[groupi].keys()):
                     for contig in groups2ext_query[groupi][query][1] or {query}:
-                        if contig in failed_join_potential:
+                        if contig in contig_link_no_pe:
                             print(
                                 *(failed_reason, groupi, query),
                                 check_assembly_reason.get(query, ("", "redundant"))[1],
@@ -1893,7 +1958,7 @@ def cobra(
                 for query in sorted(groups2ext_query[groupi])
                 for contig in sorted(groups2ext_query[groupi][query][1] or {query})
             ):
-                if contig in failed_join_potential:
+                if contig in contig_link_no_pe:
                     print(
                         *("blast_half", groupi, query),
                         check_assembly_reason[rep_query][1],
@@ -1930,7 +1995,7 @@ def cobra(
                     for contig in contig2assembly[query]
                 }
             ):
-                if contig in failed_join_potential:
+                if contig in contig_link_no_pe:
                     print(
                         *("circular_8", groupi, query),
                         check_assembly_reason[rep_query][1],
