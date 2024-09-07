@@ -37,7 +37,7 @@ jobs:
         uses: mamba-org/setup-micromamba@v1
         with:
           environment-name: cobra
-          create-args: blast python pytest biopython pysam
+          create-args: blast python pytest biopython pysam pandas
           cache-environment: true
           condarc: |
             channels:
