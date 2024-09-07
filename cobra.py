@@ -1394,13 +1394,14 @@ def get_assembly2reason(
                 group[subset].dup_queries,
             )
             subsets.update(subset_trunks[subset].standalong_subs)
+            subset_trunks.update(subset_trunks[subset].standalong_subs)
         else:
             subset_circular = [i for i in frags if i in path_circular_potential]
             while (
                 subset_circular
                 and frags
                 # confirm potential `6` to speed up
-                and subset_circular[-1] != frags[-1]
+                and subset_circular[0] != frags[-1]
             ):
                 arm_contigs = (
                     contig2assembly[frags[-1]] - contig2assembly[subset_circular[-1]]
@@ -1446,6 +1447,7 @@ def get_assembly2reason(
                     # check if any extension on the smallest `0`
                     # if so, any `6` will be considered as part of the biggest `8`
                     # and `8` is tightened as the smallest `0`
+                    # it seems never be touched as subset_circular already handled as standalong_subs
                     frag = frags[-1]
                     check_assembly_reason[frag] = AssemblyReason(
                         groupi,
