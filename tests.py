@@ -193,6 +193,102 @@ def test_get_sub_trunks_subs():
     }
 
 
+def test_get_sub_trunks_disjoint_i():
+    # fmt: off
+    contig2assembly = {
+        "A": {"A",              },
+        "B": {"A", "B"          },
+        "C": {          "C", "D"},
+        "D": {     "B", "C", "D"},
+    }
+    # fmt: on
+    groups2ext_query = dict(
+        enumerate(
+            sorted(
+                query2groups(contig2assembly, query_set=query_set),
+                key=lambda d: sorted(d),
+            )
+        )
+    )
+    print(groups2ext_query)
+
+    subset_trunks, _unextendable, _failed_reason = _get_subset_trunks(
+        0, groups2ext_query[0]
+    )
+    print(f"{subset_trunks=}", f"{_unextendable=}", f"{_failed_reason=}", sep="\n")
+    assert subset_trunks == {
+        "C": SubsetChunk(standalong_subs={}, frags=["C"]),
+        "A": SubsetChunk(standalong_subs={}, frags=["A"]),
+    }
+    assert _unextendable == {"D", "B"}
+    assert _failed_reason == {
+        "D": AssemblyReason(
+            groupid=0,
+            judgement="conflict_query",
+            represent_seqs=_failed_reason["B"].represent_seqs,
+            dup_queries=frozenset(),
+        ),
+        "B": AssemblyReason(
+            groupid=0,
+            judgement="conflict_query",
+            represent_seqs=_failed_reason["D"].represent_seqs,
+            dup_queries=frozenset(),
+        ),
+    }
+
+
+def test_get_sub_trunks_disjoint_sub():
+    # fmt: off
+    contig2assembly = {
+        "A": {"A",                   },
+        "B": {"A", "B"               },
+        "C": {          "C", "D"     },
+        "D": {"A", "B", "C", "D"     },
+        "E": {     "B", "C", "D", "E"},
+    }
+    # fmt: on
+    groups2ext_query = dict(
+        enumerate(
+            sorted(
+                query2groups(contig2assembly, query_set=query_set),
+                key=lambda d: sorted(d),
+            )
+        )
+    )
+    print(groups2ext_query)
+
+    subset_trunks, _unextendable, _failed_reason = _get_subset_trunks(
+        0, groups2ext_query[0]
+    )
+    print(f"{subset_trunks=}", f"{_unextendable=}", f"{_failed_reason=}", sep="\n")
+    assert subset_trunks == {
+        "A": SubsetChunk(standalong_subs={}, frags=["A"]),
+        "C": SubsetChunk(standalong_subs={}, frags=["C"]),
+    }
+    assert len(_unextendable) == 3
+    assert _unextendable < {"B", "C", "D", "E"}
+    assert _failed_reason == {
+        "E": AssemblyReason(
+            groupid=0,
+            judgement="conflict_query",
+            represent_seqs=_failed_reason["E"].represent_seqs,
+            dup_queries=frozenset(),
+        ),
+        "D": AssemblyReason(
+            groupid=0,
+            judgement="conflict_query",
+            represent_seqs=_failed_reason["D"].represent_seqs,
+            dup_queries=frozenset(),
+        ),
+        "B": AssemblyReason(
+            groupid=0,
+            judgement="conflict_query",
+            represent_seqs=["B"],
+            dup_queries=frozenset(),
+        ),
+    }
+
+
 def test_get_sub_trunks_8():
     # fmt: off
     contig2assembly = {

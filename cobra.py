@@ -1292,7 +1292,16 @@ def _get_subset_trunks(groupi: int, group: dict[str, GroupAssemblyIndex]):
                     subset_unextendable[frags[fragi - 1]] = set(frags[fragi:])
                 elif standalong_subs:
                     # we should check those in .sdandalong_subs as well
-                    disjoints.update(standalong_subs)
+                    for frag in standalong_subs:
+                        if group[frag].special - group[this].special:
+                            # disjoint happens here, dig into it
+                            # if the common subset is not the first one, should keep it
+                            disjoints.add(frag)
+                        else:
+                            # rsecue the common subset
+                            subset_unextendable[frag] = {frag}
+                        # will be moved in next loops if has disjoint
+                        subset_trunks[frag] = standalong_subs[frag]
                 else:
                     # all query in the extention failed
                     subset_unextendable[frag] = {frag}
