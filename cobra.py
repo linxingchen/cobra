@@ -1272,7 +1272,7 @@ def _get_subset_trunks(groupi: int, group: dict[str, GroupAssemblyIndex]):
             disjoints = set(this_feature["has_disjoint"])
             while disjoints:
                 frag = disjoints.pop()
-                frags = subset_trunks[frag].frags
+                standalong_subs, frags = subset_trunks.pop(frag)
                 # --- |       [  keep  ] if any
                 # ----|--     [disjoint] frag
                 #     |xxxxxx [disjoint] this
@@ -1287,15 +1287,15 @@ def _get_subset_trunks(groupi: int, group: dict[str, GroupAssemblyIndex]):
                     # here we assert len(frags) >= 2, and at least frags[0] is the common subset
                     # so we rsecue the common subset
                     subset_trunks[frags[fragi - 1]] = SubsetChunk(
-                        subset_trunks.pop(frag).standalong_subs, frags[:fragi]
+                        standalong_subs, frags[:fragi]
                     )
                     subset_unextendable[frags[fragi - 1]] = set(frags[fragi:])
-                elif not subset_trunks.pop(frag).standalong_subs:
+                elif standalong_subs:
+                    # we should check those in .sdandalong_subs as well
+                    disjoints.update(standalong_subs)
+                else:
                     # all query in the extention failed
                     subset_unextendable[frag] = {frag}
-                else:
-                    # we should check those in .sdandalong_subs as well
-                    disjoints.update(subset_trunks.pop(frag).standalong_subs)
                 # frozen it, or record in because this common subset cannot be bigger
                 check_assembly_reason[frags[-1]] = AssemblyReason(
                     groupi,
