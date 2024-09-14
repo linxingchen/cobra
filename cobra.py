@@ -87,6 +87,12 @@ def parse_args(args=None):
         required=True,
     )
     requiredNamed.add_argument(
+        "--mapping-link-cache",
+        type=str,
+        nargs="*",
+        help=" cache reads mapping to gzip info to speed up secondary run.",
+    )
+    requiredNamed.add_argument(
         "-c",
         "--coverage",
         type=str,
@@ -791,144 +797,235 @@ def get_query_set(query_fa: Path, uniset: dict[str, T]):
     return frozenset(query_set)
 
 
-def get_pe_links(
-    mapping_file: Path,
-    trim_readno: Literal["no", "trim", "auto"],
-    contig2len: dict[str, int],
-    orphan_set: frozenset[str],
-    linkage_mismatch: int = 2,
-):
-    """
-    contig_pe_links: paired linkage supported by bam file
-    orphan_pe_spanned:
-        contig without kmer with other contigs, and the end may be spanned by paired-end reads
-    """
-    if trim_readno == "auto":
-        with pysam.AlignmentFile(f"{mapping_file}", "rb") as map_file:
-            for rmap in map_file:
-                if rmap.query_name is not None:
-                    if rmap.query_name[-2:] in ("/1", "/2"):
-                        trim_readno = "trim"
-                    else:
-                        trim_readno = "no"
-                    break
-    parse_readid: Callable[[str], str] = (
-        (lambda x: x) if trim_readno == "no" else lambda x: x[:-2]
-    )
-    linkage: dict[str, set[str]] = defaultdict(set)
-    orphan2pe_span: dict[str, dict[str, list[int]]] = {
-        contig: defaultdict(list) for contig in orphan_set
-    }
-    with pysam.AlignmentFile(f"{mapping_file}", "rb") as map_file:
-        for rmap in tqdm(
-            map_file,
-            desc="Getting contig linkage based on sam/bam. Be patient, this may take long",
-        ):
-            if rmap.is_unmapped:
-                continue
-            assert rmap.query_name is not None
-            assert rmap.reference_name is not None
-            if linkage_mismatch < int(rmap.get_tag("NM")):
-                continue
-            if rmap.reference_name != rmap.next_reference_name:
-                # Check if the read and its mate map to different contigs
-                # get name just before use it to speed up
-                rmap_readid = parse_readid(rmap.query_name)
-                if contig2len[rmap.reference_name] > 1000:
-                    # determine if the read maps to the left or right end
-                    # >contig1
-                    # >>>>>>>>>>>>>>>>>>>>>>>>...>
-                    # |           |           |
-                    # ^- 0        ^- 500      ^- 1000
-                    # +++++++ ... |              .       | linkage[read_i].add(contig1_L)
-                    #         ... +++++++        .       | linkage[read_i].add(contig1_L)
-                    #             |+++++++  ...  |       | linkage[read_i].add(contig1_R)
-                    #                       ...  +++++++ | linkage[read_i].add(contig1_R)
-                    # @read_i
-                    #
-                    linkage[rmap_readid].add(
-                        rmap.reference_name
-                        + ("_L" if rmap.reference_start <= 500 else "_R")
-                    )
-                else:
-                    # >contig1
-                    # >>>>>>>>>>>>>>>>>>>>...>
-                    # |           |           |
-                    # ^- 0        ^- 500      ^- 1000
-                    # +++++++   ...           | linkage[read_i].add(contig1_L, contig1_R)
-                    #           ...   +++++++ | linkage[read_i].add(contig1_L, contig1_R)
-                    # @read_i
-                    #
-                    # add both the left and right ends to the linkage
-                    linkage[rmap_readid].add(rmap.reference_name + "_L")
-                    linkage[rmap_readid].add(rmap.reference_name + "_R")
+class MappingLinks:
+    def __init__(self, mapping, mapping_link_cache):
+        if mapping_link_cache is None:
+            self.link_cache: Path | None = None
+            self.mapping: Path | None = Path(mapping)
+        elif len(mapping_link_cache) == 0:
+            mapping_file = Path(mapping)
+            if mapping_file.suffix == ".gz":
+                self.link_cache = mapping_file
+                self.mapping = None
+            elif mapping_file.suffix in {".sam", ".bam"}:
+                self.mapping = mapping_file
+                self.link_cache = mapping_file.with_suffix(".link_cache.gz")
             else:
-                # If the read and its mate map to the same contig, store the read mapped position (start)
-                if rmap.reference_name in orphan_set:
+                self.mapping = mapping_file
+                self.link_cache = mapping_file.with_suffix(
+                    f"{mapping_file.suffix}.link_cache.gz"
+                )
+        elif len(mapping_link_cache) == 1:
+            self.mapping = Path(mapping)
+            self.link_cache = Path(mapping_link_cache[0])
+        else:
+            raise ValueError("Only one cache file is allowed.")
+
+        if self.link_cache is not None and not self.link_cache.exists():
+            self.link_cache.parent.mkdir(parents=True, exist_ok=True)
+
+    def path(self):
+        if self.cached():
+            return self.link_cache
+        return self.mapping
+
+    def write_cache(self, contig_pe_links, orphan2pe_span):
+        import gzip
+
+        assert self.link_cache is not None
+        with gzip.open(self.link_cache, "wb") as f:
+            f.write(b">>>>>>>contig_pe_links\n")
+            for i, j in contig_pe_links:
+                f.write(f"{i}\t{j}\n".encode())
+            f.write(b">>>>>>>orphan2pe_span\n")
+            for i in orphan2pe_span:
+                f.write(f"{i}\n".encode())
+
+    def read_cache(self):
+        import gzip
+
+        assert self.link_cache is not None
+        with gzip.open(self.link_cache, "rb") as f:
+            contig_pe_links = set()
+            orphan2pe_span = set()
+            for line in f:
+                if line.startswith(b">>>>>>>contig_pe_links"):
+                    break
+            for line in f:
+                if line.startswith(b">>>>>>>orphan2pe_span"):
+                    break
+                contig_pe_links.add(tuple(line.decode().strip().split("\t")))
+            for line in f:
+                orphan2pe_span.add(line.decode().strip())
+        return frozenset(contig_pe_links), frozenset(orphan2pe_span)
+
+    def cached(self):
+        return self.link_cache is not None and self.link_cache.exists()
+
+    def get_link(
+        self,
+        trim_readno: Literal["no", "trim", "auto"],
+        contig2len: dict[str, int],
+        orphan_set: frozenset[str],
+        linkage_mismatch: int = 2,
+    ):
+        """
+        contig_pe_links: paired linkage supported by bam file
+        orphan_pe_spanned:
+            contig without kmer with other contigs, and the end may be spanned by paired-end reads
+        """
+        if self.cached():
+            return self.read_cache()
+        assert self.mapping is not None
+        contig_pe_links, orphan_pe_spanned = self.read_link(
+            self.mapping, trim_readno, contig2len, orphan_set, linkage_mismatch
+        )
+        if self.link_cache is not None:
+            self.write_cache(contig_pe_links, orphan_pe_spanned)
+        return contig_pe_links, orphan_pe_spanned
+
+    @staticmethod
+    def read_link(
+        mapping_file: Path,
+        trim_readno: Literal["no", "trim", "auto"],
+        contig2len: dict[str, int],
+        orphan_set: frozenset[str],
+        linkage_mismatch: int = 2,
+    ):
+        """
+        contig_pe_links: paired linkage supported by bam file
+        orphan_pe_spanned:
+            contig without kmer with other contigs, and the end may be spanned by paired-end reads
+        """
+        if trim_readno == "auto":
+            with pysam.AlignmentFile(f"{mapping_file}", "rb") as map_file:
+                for rmap in map_file:
+                    if rmap.query_name is not None:
+                        if rmap.query_name[-2:] in ("/1", "/2"):
+                            trim_readno = "trim"
+                        else:
+                            trim_readno = "no"
+                        break
+        parse_readid: Callable[[str], str] = (
+            (lambda x: x) if trim_readno == "no" else lambda x: x[:-2]
+        )
+        linkage: dict[str, set[str]] = defaultdict(set)
+        orphan2pe_span: dict[str, dict[str, list[int]]] = {
+            contig: defaultdict(list) for contig in orphan_set
+        }
+        with pysam.AlignmentFile(f"{mapping_file}", "rb") as map_file:
+            for rmap in tqdm(
+                map_file,
+                desc="Getting contig linkage based on sam/bam. Be patient, this may take long",
+            ):
+                if rmap.is_unmapped:
+                    continue
+                assert rmap.query_name is not None
+                assert rmap.reference_name is not None
+                if linkage_mismatch < int(rmap.get_tag("NM")):
+                    continue
+                if rmap.reference_name != rmap.next_reference_name:
+                    # Check if the read and its mate map to different contigs
+                    # get name just before use it to speed up
+                    rmap_readid = parse_readid(rmap.query_name)
+                    if contig2len[rmap.reference_name] > 1000:
+                        # determine if the read maps to the left or right end
+                        # >contig1
+                        # >>>>>>>>>>>>>>>>>>>>>>>>...>
+                        # |           |           |
+                        # ^- 0        ^- 500      ^- 1000
+                        # +++++++ ... |              .       | linkage[read_i].add(contig1_L)
+                        #         ... +++++++        .       | linkage[read_i].add(contig1_L)
+                        #             |+++++++  ...  |       | linkage[read_i].add(contig1_R)
+                        #                       ...  +++++++ | linkage[read_i].add(contig1_R)
+                        # @read_i
+                        #
+                        linkage[rmap_readid].add(
+                            rmap.reference_name
+                            + ("_L" if rmap.reference_start <= 500 else "_R")
+                        )
+                    else:
+                        # >contig1
+                        # >>>>>>>>>>>>>>>>>>>>...>
+                        # |           |           |
+                        # ^- 0        ^- 500      ^- 1000
+                        # +++++++   ...           | linkage[read_i].add(contig1_L, contig1_R)
+                        #           ...   +++++++ | linkage[read_i].add(contig1_L, contig1_R)
+                        # @read_i
+                        #
+                        # add both the left and right ends to the linkage
+                        linkage[rmap_readid].add(rmap.reference_name + "_L")
+                        linkage[rmap_readid].add(rmap.reference_name + "_R")
+                else:
+                    # If the read and its mate map to the same contig, store the read mapped position (start)
+                    if rmap.reference_name in orphan_set:
+                        # >contig1, normally > 1000 bp
+                        # >>>>>>>>>>>>>>......>>>>>>>>>>>>>
+                        # |           | ...... |           |
+                        # ^- 0        ^- 500   ^- -500     ^- -0
+                        # +++++++ ... |        .             | orphan2pe_span[contig1][read_i].append(0)
+                        #         ... +++++++  .             | orphan2pe_span[contig1][read_i].append(499)
+                        #             |+++++++ |             |
+                        #                      +++++++       |
+                        #                       +++++++      | orphan2pe_span[contig1][read_i].append(-500)
+                        # @read_i/1
+                        #               +++++++
+                        #               @read_i/2
+                        #
+                        # add both the left and right ends to the linkage
+                        # only care about those in query
+                        if (
+                            rmap.reference_start <= 500
+                            or contig2len[rmap.reference_name] - rmap.reference_start
+                            <= 500
+                        ):
+                            orphan2pe_span[rmap.reference_name][
+                                parse_readid(rmap.query_name)
+                            ].append(rmap.reference_start)
+
+        contig_pe_links: set[tuple[str, str]] = set()
+        for read in tqdm(linkage, desc="Parsing the linkage information"):
+            # len(linkage[read]) in (1, 2, 3, 4)
+            if (
+                len(linkage[read]) >= 2
+            ):  # Process only reads linked to at least two contigs
+                for item, item_1 in itertools.combinations(linkage[read], 2):
+                    # Generate unique pairs of linked contigs for the current read using itertools.combinations
+                    if item.rsplit("_", 1)[1] != item_1.rsplit("_", 1)[1]:
+                        # If the contigs have different ends (_L or _R), add the combinations to the parsed_linkage
+                        contig_pe_links.add((item, item_1))
+                        contig_pe_links.add((item_1, item))
+                        contig_pe_links.add((item + "rc", item_1 + "rc"))
+                        contig_pe_links.add((item_1 + "rc", item + "rc"))
+                    else:
+                        # If the contigs have the same ends, add the combinations with reverse-complement (_rc) to the parsed_linkage
+                        # Warning: contigs <= 1000 bp will be linked to it self: (contig1_L, contig1_Rrc) etc.
+                        contig_pe_links.add((item, item_1 + "rc"))
+                        contig_pe_links.add((item_1 + "rc", item))
+                        contig_pe_links.add((item + "rc", item_1))
+                        contig_pe_links.add((item_1, item + "rc"))
+        # Initialize a set to store the contig spanned by paired-end reads
+        orphan_pe_spanned: set[str] = set()
+        for contig in orphan_set:
+            # Check if the count is 0 and the contig has exactly two paired-end reads
+            for PE in orphan2pe_span[contig].values():
+                if len(PE) == 2 and abs(PE[0] - PE[1]) >= contig2len[contig] - 1000:
                     # >contig1, normally > 1000 bp
                     # >>>>>>>>>>>>>>......>>>>>>>>>>>>>
                     # |           | ...... |           |
                     # ^- 0        ^- 500   ^- -500     ^- -0
-                    # +++++++ ... |        .             | orphan2pe_span[contig1][read_i].append(0)
-                    #         ... +++++++  .             | orphan2pe_span[contig1][read_i].append(499)
-                    #             |+++++++ |             |
-                    #                      +++++++       |
-                    #                       +++++++      | orphan2pe_span[contig1][read_i].append(-500)
-                    # @read_i/1
-                    #               +++++++
-                    #               @read_i/2
+                    # +++++++ ... |        |
+                    #         ... +++++++  |
+                    #   @read_i/1 .        |
+                    #             .        +++++++
+                    #             .        .     +++++++
+                    #             .        .  @read_i/2
+                    #             |--------| <- contig2len[contig1] - 1000
                     #
-                    # add both the left and right ends to the linkage
-                    # only care about those in query
-                    if (
-                        rmap.reference_start <= 500
-                        or contig2len[rmap.reference_name] - rmap.reference_start <= 500
-                    ):
-                        orphan2pe_span[rmap.reference_name][
-                            parse_readid(rmap.query_name)
-                        ].append(rmap.reference_start)
+                    orphan_pe_spanned.add(contig)
+                    break
 
-    contig_pe_links: set[tuple[str, str]] = set()
-    for read in tqdm(linkage, desc="Parsing the linkage information"):
-        # len(linkage[read]) in (1, 2, 3, 4)
-        if len(linkage[read]) >= 2:  # Process only reads linked to at least two contigs
-            for item, item_1 in itertools.combinations(linkage[read], 2):
-                # Generate unique pairs of linked contigs for the current read using itertools.combinations
-                if item.rsplit("_", 1)[1] != item_1.rsplit("_", 1)[1]:
-                    # If the contigs have different ends (_L or _R), add the combinations to the parsed_linkage
-                    contig_pe_links.add((item, item_1))
-                    contig_pe_links.add((item_1, item))
-                    contig_pe_links.add((item + "rc", item_1 + "rc"))
-                    contig_pe_links.add((item_1 + "rc", item + "rc"))
-                else:
-                    # If the contigs have the same ends, add the combinations with reverse-complement (_rc) to the parsed_linkage
-                    # Warning: contigs <= 1000 bp will be linked to it self: (contig1_L, contig1_Rrc) etc.
-                    contig_pe_links.add((item, item_1 + "rc"))
-                    contig_pe_links.add((item_1 + "rc", item))
-                    contig_pe_links.add((item + "rc", item_1))
-                    contig_pe_links.add((item_1, item + "rc"))
-    # Initialize a set to store the contig spanned by paired-end reads
-    orphan_pe_spanned: set[str] = set()
-    for contig in orphan_set:
-        # Check if the count is 0 and the contig has exactly two paired-end reads
-        for PE in orphan2pe_span[contig].values():
-            if len(PE) == 2 and abs(PE[0] - PE[1]) >= contig2len[contig] - 1000:
-                # >contig1, normally > 1000 bp
-                # >>>>>>>>>>>>>>......>>>>>>>>>>>>>
-                # |           | ...... |           |
-                # ^- 0        ^- 500   ^- -500     ^- -0
-                # +++++++ ... |        |
-                #         ... +++++++  |
-                #   @read_i/1 .        |
-                #             .        +++++++
-                #             .        .     +++++++
-                #             .        .  @read_i/2
-                #             |--------| <- contig2len[contig1] - 1000
-                #
-                orphan_pe_spanned.add(contig)
-                break
-
-    return frozenset(contig_pe_links), frozenset(orphan_pe_spanned)
+        return frozenset(contig_pe_links), frozenset(orphan_pe_spanned)
 
 
 class QueryCovVar(NamedTuple):
@@ -1492,10 +1589,31 @@ def get_assembly2reason(
     return check_assembly_reason
 
 
+def get_assembly2reason2(
+    groupi: int,
+    group: dict[str, GroupAssemblyIndex],
+    contig2assembly: dict[str, set[str]],
+    path_circular_potential: frozenset[str],
+    contig_link_no_pe: frozenset[str],
+):
+    if len(group) == 1:
+        for this in group:
+            return {
+                this: AssemblyReason(groupi, "standalone", [], group[this].dup_queries)
+            }
+    largest = max(group, key=lambda q: len(group[q].special))
+    if all(i.special <= group[largest].special for i in group.values()):
+        return {
+            largest: AssemblyReason(
+                groupi, "longest", [largest], group[largest].dup_queries
+            )
+        }
+
+
 def cobra(
     query_fa: Path,
     assem_fa: Path,
-    mapping_file: Path,
+    mapping_links: MappingLinks,
     coverage_file: Path,
     maxk: int,
     mink: int,
@@ -1516,7 +1634,7 @@ def cobra(
         f"# Read mapping max mismatches for contig linkage: {linkage_mismatch}",
         f"# Query contigs: {query_fa.expanduser().absolute().resolve()}",
         f"# Whole contig set: {assem_fa.expanduser().absolute().resolve()}",
-        f"# Mapping file: {mapping_file.expanduser().absolute().resolve()}",
+        f"# Mapping file: {mapping_links.path().expanduser().absolute().resolve()}",
         f"# Coverage file: {coverage_file.expanduser().absolute().resolve()}",
         f"# Output folder: {working_dir.expanduser().absolute().resolve()}",
         sep="\n",
@@ -1551,8 +1669,7 @@ def cobra(
     )
     # get the linkage of contigs based on paired-end reads mapping
     _log_info_1("Getting linkage based on sam/bam. Be patient, this may take long.")
-    contig_pe_links, orphan_pe_spanned = get_pe_links(
-        mapping_file,
+    contig_pe_links, orphan_pe_spanned = mapping_links.get_link(
         trim_readno=trim_readno,
         contig2len=contig2len,
         orphan_set=orphan_pre_set,
@@ -2321,13 +2438,15 @@ def summary_join(
     return contig2join_detail
 
 
-def main():
-    args = parse_args()
+def main(args=None):
+    args = parse_args(args)
     # get information from the input files and parameters and save information
     # get the name of the whole contigs fasta file
     # folder of output
     query_fa = Path(args.query)
     working_dir = Path(args.output) if args.output else Path(f"{query_fa.name}_COBRA")
+    # check cache
+    mapping_links = MappingLinks(args.mapping, args.mapping_link_cache)
     ##
     # get information from the input files and parameters and save information
     # get the name of the whole contigs fasta file
@@ -2341,6 +2460,7 @@ def main():
     maxk = args.maxk - 1 if args.assembler == "idba" else args.maxk
     # determine potential self_circular contigs from contigs with orphan end
     mink = args.mink - 1 if args.assembler == "idba" else args.mink
+
     with (
         open(working_dir / f"log", "w") as logfile,
         open(working_dir / f"debug.txt", "w") as debugfile,
@@ -2348,7 +2468,7 @@ def main():
         cobra(
             query_fa=query_fa,
             assem_fa=Path(args.fasta),
-            mapping_file=Path(args.mapping),
+            mapping_links=mapping_links,
             coverage_file=Path(args.coverage),
             maxk=maxk,
             mink=mink,
