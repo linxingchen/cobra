@@ -749,20 +749,17 @@ def check_Y_paths(
 
 
 def get_cov(coverage_file: Path):
-    contig2cov: dict[str, float] = {}  # the coverage of contigs
+    contig2cov: dict[str, float] = {}
     with open(coverage_file) as coverage:
-        # Sometimes will give a file with header, just ignore it once
         for line in coverage:
-            header_cov, cov_value = line.strip().split("\t")[:2]
             try:
+                header_cov, cov_value = line.strip().split("\t")[:2]
                 contig2cov[header_cov] = float(cov_value)
             except ValueError:
-                pass
-            break
-        for line in coverage:
-            header_cov, cov_value = line.strip().split("\t")[:2]
-            contig2cov[header_cov] = float(cov_value)
+                # Skip header or malformed lines
+                continue
     return contig2cov
+
 
 
 def get_query_set(query_fa: Path, uniset: dict[str, T]):
@@ -999,6 +996,8 @@ def write_and_run_blast(
             ):
                 for header, seq, overlap in data_chunk:
                     real_seq_len = len(seq) - overlap
+                    if real_seq_len <= 0:
+                        real_seq_len = len(seq)
                     cobra_seq2lenblast[header] = real_seq_len, []
                     half = (len(seq) + 1) // 2
                     print(f">{header}_1\n{seq[:half]}", file=blastdb_1)
@@ -1527,7 +1526,7 @@ def cobra(
         if contig in query_set
         and (l := check_self_circular_soft(contig2seq[contig], mink)) > 0
     }
-    orphan_query = orphan_pre_set - self_circular_flex.keys() & query_set
+    orphan_query = (orphan_pre_set - self_circular_flex.keys()) & query_set
     _log_debug(f"# self_circular_flexible_overlap: {len(self_circular_flex)}")
     _log_debug(sorted(self_circular_flex))
 
