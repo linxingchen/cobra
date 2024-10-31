@@ -71,26 +71,13 @@ def test_get_sub_trunks_conflict():
     )
     print(assembly_reason)
     assert assembly_reason == {
-        "B": AssemblyReason(
-            groupid=0,
-            judgement="conflict_query",
-            represent_seqs=assembly_reason["A"].represent_seqs,
-            dup_queries=frozenset(),
-        ),
-        "A": AssemblyReason(
-            groupid=0,
-            judgement="conflict_query",
-            represent_seqs=assembly_reason["B"].represent_seqs,
-            dup_queries=frozenset(),
-        ),
         "C": AssemblyReason(
             groupid=0,
-            judgement="conflict_query",
+            judgement="longest",
             represent_seqs=assembly_reason["C"].represent_seqs,
             dup_queries=frozenset(),
         ),
     }
-    assert len(assembly_reason["A"].represent_seqs) == 1
     assert set(assembly_reason["C"].represent_seqs) == {"A", "B"}
 
 
@@ -141,29 +128,27 @@ def test_get_sub_trunks_subs():
         "D": AssemblyReason(
             groupid=0,
             judgement="longest",
-            represent_seqs=["D"],
+            represent_seqs=assembly_reason["D"].represent_seqs,
             dup_queries=frozenset(),
         )
     }
+    assert set(assembly_reason["D"].represent_seqs) == {"A", "B", "C"}
 
     # 实际上不可能存在
     assembly_reason = get_assembly2reason(
-        0,
-        groups2ext_query[0],
+        groupi=0,
+        group=groups2ext_query[0],
         contig2assembly=contig2assembly,
         path_circular_potential=frozenset(),
         contig_link_no_pe=frozenset("C"),
     )
     print(assembly_reason)
     # FIXME: this can be a bug: we expect at least A--B can be kept
-    assert assembly_reason == {
-        "D": AssemblyReason(
-            groupid=0,
-            judgement="nolink_query",
-            represent_seqs=["D"],
-            dup_queries=frozenset(),
-        )
-    }
+    assert assembly_reason["D"].judgement == "nolink_query"
+    assert assembly_reason["B"].judgement == "longest"
+    assert assembly_reason["B"] == AssemblyReason(
+        groupid=0, judgement="longest", represent_seqs=["A"], dup_queries=frozenset()
+    )
 
     # FIXME: 应该都失败? 或者丢掉圈, 仅保留臂
     assembly_reason = get_assembly2reason(
@@ -177,23 +162,24 @@ def test_get_sub_trunks_subs():
     assert assembly_reason == {
         "D": AssemblyReason(
             groupid=0,
-            judgement="circular_in_sub",
-            represent_seqs=["D"],
+            judgement="circular_6_conflict",
+            represent_seqs=assembly_reason["D"].represent_seqs,
             dup_queries=frozenset(),
         ),
         "C": AssemblyReason(
             groupid=0,
             judgement="longest",
-            represent_seqs=["C"],
+            represent_seqs=[],
             dup_queries=frozenset(),
         ),
-        "B": AssemblyReason(
+        "A": AssemblyReason(
             groupid=0,
             judgement="longest",
-            represent_seqs=["A", "B"],
+            represent_seqs=[],
             dup_queries=frozenset(),
         ),
     }
+    assert set(assembly_reason["D"].represent_seqs) == {"B", "D"}
 
 
 def test_get_sub_trunks_disjoint_i():
@@ -338,7 +324,7 @@ def test_get_sub_trunks_8():
         "B": AssemblyReason(
             groupid=0,
             judgement="longest",
-            represent_seqs=["A", "B"],
+            represent_seqs=["A"],
             dup_queries=frozenset(),
         ),
     }
@@ -381,31 +367,14 @@ def test_get_sub_trunks_sub_only():
     )
     print(assembly_reason)
     assert assembly_reason == {
-        "B": AssemblyReason(
-            groupid=0,
-            judgement="conflict_query",
-            represent_seqs=assembly_reason["A"].represent_seqs,
-            dup_queries=frozenset(),
-        ),
-        "A": AssemblyReason(
-            groupid=0,
-            judgement="conflict_query",
-            represent_seqs=assembly_reason["B"].represent_seqs,
-            dup_queries=frozenset(),
-        ),
         "D": AssemblyReason(
             groupid=0,
-            judgement="conflict_query",
+            judgement="longest",
             represent_seqs=assembly_reason["D"].represent_seqs,
             dup_queries=frozenset(),
         ),
-        "C": AssemblyReason(
-            groupid=0,
-            judgement="longest",
-            represent_seqs=["C"],
-            dup_queries=frozenset(),
-        ),
     }
+    assert set(assembly_reason["D"].represent_seqs) == {"A", "B", "C"}
 
 
 def test_get_sub_trunks_real():
@@ -462,22 +431,26 @@ def test_get_sub_trunks_real():
         contig_link_no_pe=frozenset({"AcMG_9528"}),
     )
     print(assembly_reason)
+    (rep_conflit_seq,) = {
+        "AcMG_9925",
+        "AcMG_5518",
+        "AcMG_12242",
+    } & assembly_reason.keys()
     assert assembly_reason == {
-        "AcMG_755": AssemblyReason(
+        rep_conflit_seq: AssemblyReason(
             groupid=0,
             judgement="circular_6_conflict",
-            represent_seqs=assembly_reason["AcMG_755"].represent_seqs,
-            dup_queries=frozenset(),
+            represent_seqs=assembly_reason[rep_conflit_seq].represent_seqs,
+            dup_queries=frozenset({"AcMG_9925", "AcMG_5518", "AcMG_12242"}),
         ),
         "AcMG_3793": AssemblyReason(
-            groupid=0,
-            judgement="longest",
-            represent_seqs=["AcMG_3793"],
-            dup_queries=frozenset(),
+            groupid=0, judgement="longest", represent_seqs=[], dup_queries=frozenset()
         ),
     }
-    assert len(assembly_reason["AcMG_755"].represent_seqs) == 2
-    assert assembly_reason["AcMG_755"].represent_seqs[0] == "AcMG_755"
+    assert set(assembly_reason[rep_conflit_seq].represent_seqs) == {
+        rep_conflit_seq,
+        "AcMG_755",
+    }
 
 
 def _test_local(

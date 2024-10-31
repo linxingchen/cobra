@@ -1452,7 +1452,7 @@ def _get_subset_trunks(groupi: int, group: dict[str, GroupAssemblyIndex]):
     )
 
 
-def get_assembly2reason(
+def _get_assembly2reason(
     groupi: int,
     group: dict[str, GroupAssemblyIndex],
     contig2assembly: dict[str, set[str]],
@@ -1592,18 +1592,109 @@ def get_assembly2reason(
     return check_assembly_reason
 
 
-def get_assembly2reason2(
+def get_assembly2reason(
     groupi: int,
     group: dict[str, GroupAssemblyIndex],
     contig2assembly: dict[str, set[str]],
     path_circular_potential: frozenset[str],
     contig_link_no_pe: frozenset[str],
 ):
+    """
+    for the group:
+        1. check if the longest one is the superset of all others:
+            True -> goto 2.
+            False -> |
+                check if there is sub standalone:
+                    True -> cache the sub standalone, process it after 3.
+                    False -> |
+                        all those `not <= or >=` the longest one marked failed_wait
+                        for each one in failed_wait:
+                            add other `not <= or >=` to failed_wait
+                goto 1.
+        2. check if the longest one is avail, i.e. not the `6` or `8`
+            `6` -> marked the longest and all the sub circular failed, and got 1.
+            `8` -> reject the largest one and goto 1.
+            False -> goto 3.
+        3. check if any contig2assembly[frag] & contig_link_no_pe
+            True -> |
+                Mark the frag as "nolink_query",
+                remove all paths containing this frag.
+                goto 1.
+            False -> |
+                record the longest one
+                if sth cached in 1.False.True:
+                    True -> pop it and goto 1.
+                    False -> return
+    """
     if len(group) == 1:
         for this in group:
             return {
                 this: AssemblyReason(groupi, "standalone", [], group[this].dup_queries)
             }
+    subsets = sorted(group, key=lambda q: len(group[q].special))
+
+    def clean_failed(*_failed_wait: str, reason="conflict_query"):
+        nonlocal subsets
+        failed_wait = set(_failed_wait)
+        _this = _failed_wait[0]
+        check_assembly_reason[_this] = AssemblyReason(
+            groupi, reason, [], group[_this].dup_queries
+        )
+        while failed_wait:
+            this = failed_wait.pop()
+            for frag in subsets:
+                conflict = group[frag].special & group[this].special
+                if (
+                    conflict
+                    and (conflict < group[this].special)
+                    and (conflict < group[frag].special)
+                ):
+                    failed_wait.add(frag)
+            subsets = [i for i in subsets if i not in failed_wait and i != this]
+            check_assembly_reason[_this].represent_seqs.append(this)
+
+    check_assembly_reason: dict[str, AssemblyReason] = {}
+    standalong_subs: list[list[str]] = []
+    while subsets:
+        # step 1
+        this = subsets.pop(-1)
+        conflicts = [
+            frag for frag in subsets if not group[this].special >= group[frag].special
+        ]
+        if not conflicts:
+            # the best one, meaning that this is representative to all others
+            pass
+        elif any(group[this].special & group[frag].special for frag in conflicts):
+            clean_failed(this)
+            continue
+        else:
+            # a full difference occurs
+            subsets = [i for i in subsets if i not in conflicts]
+            standalong_subs.append(conflicts)
+        # step 2
+        subset_circular = [i for i in subsets if i in path_circular_potential]
+        if subset_circular:
+            if this in path_circular_potential:
+                clean_failed(this, reason="circular_8_tight")
+            else:
+                clean_failed(this, *subset_circular, reason="circular_6_conflict")
+            continue
+        # step 3
+        no_pe = [i for i in subsets if contig2assembly[i] & contig_link_no_pe]
+        if no_pe or (contig2assembly[this] & contig_link_no_pe):
+            clean_failed(this, *no_pe, reason="nolink_query")
+            continue
+        check_assembly_reason[this] = AssemblyReason(
+            groupi,
+            "longest",
+            subsets,
+            group[this].dup_queries,
+        )
+        if standalong_subs:
+            subsets = standalong_subs.pop()
+            continue
+        break
+    return check_assembly_reason
 
 
 def log_group2graphviz(
@@ -2061,6 +2152,7 @@ def cobra(
         ):
             pass
         exit()
+        # endregion ugly touch output
 
     _log_info_3 = get_log_info(
         5, "2.3. Output extended paths and circulated paths", logfile
@@ -2101,7 +2193,9 @@ def cobra(
                 set(failed_joins[failed_reason].values()) - reported_failed_groups  # type: ignore[index]
             ):
                 for query in sorted(groups2ext_query[groupi].keys()):
-                    for contig in groups2ext_query[groupi][query][1] or {query}:
+                    for contig in groups2ext_query[groupi][query].dup_queries or {
+                        query
+                    }:
                         if contig in contig_link_no_pe:
                             failed_len = contig2len[query]
                             failed_path = ""
@@ -2131,7 +2225,9 @@ def cobra(
             for query in (
                 contig
                 for query in sorted(groups2ext_query[groupi])
-                for contig in sorted(groups2ext_query[groupi][query][1] or {query})
+                for contig in sorted(
+                    groups2ext_query[groupi][query].dup_queries or {query}
+                )
             ):
                 if contig in contig_link_no_pe:
                     failed_len = contig2len[query]
