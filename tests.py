@@ -37,6 +37,7 @@ def test_get_sub_trunks_one():
 
 
 def test_get_sub_trunks_conflict():
+    # FIXME: 这里其实应该 OK? 因为 A B 都是 C 的子集
     # fmt: off
     contig2assembly = {
         "A": {"A", "B"     },
@@ -96,7 +97,7 @@ def test_get_sub_trunks_conflict():
 def test_get_sub_trunks_subs():
     # fmt: off
     contig2assembly = {
-        "A": {"A",              },
+        "A": {"A"               },
         "B": {"A", "B"          },
         "C": {          "C", "D"},
         "D": {"A", "B", "C", "D"},
@@ -145,6 +146,7 @@ def test_get_sub_trunks_subs():
         )
     }
 
+    # 实际上不可能存在
     assembly_reason = get_assembly2reason(
         0,
         groups2ext_query[0],
@@ -163,6 +165,7 @@ def test_get_sub_trunks_subs():
         )
     }
 
+    # FIXME: 应该都失败? 或者丢掉圈, 仅保留臂
     assembly_reason = get_assembly2reason(
         0,
         groups2ext_query[0],
@@ -196,7 +199,7 @@ def test_get_sub_trunks_subs():
 def test_get_sub_trunks_disjoint_i():
     # fmt: off
     contig2assembly = {
-        "A": {"A",              },
+        "A": {"A"               },
         "B": {"A", "B"          },
         "C": {          "C", "D"},
         "D": {     "B", "C", "D"},
@@ -240,7 +243,7 @@ def test_get_sub_trunks_disjoint_i():
 def test_get_sub_trunks_disjoint_sub():
     # fmt: off
     contig2assembly = {
-        "A": {"A",                   },
+        "A": {"A"                    },
         "B": {"A", "B"               },
         "C": {          "C", "D"     },
         "D": {"A", "B", "C", "D"     },
@@ -292,7 +295,7 @@ def test_get_sub_trunks_disjoint_sub():
 def test_get_sub_trunks_8():
     # fmt: off
     contig2assembly = {
-        "A": {"A",         },
+        "A": {"A"          },
         "B": {"A", "B"     },
         "C": {"A", "B", "C"},
     }
@@ -342,6 +345,7 @@ def test_get_sub_trunks_8():
 
 
 def test_get_sub_trunks_sub_only():
+    # FIXME: 这里应该保留 D, ABC 都是子集
     # fmt: off
     contig2assembly = {
         "A": {"A", "B"          },
@@ -474,3 +478,47 @@ def test_get_sub_trunks_real():
     }
     assert len(assembly_reason["AcMG_755"].represent_seqs) == 2
     assert assembly_reason["AcMG_755"].represent_seqs[0] == "AcMG_755"
+
+
+def _test_local(
+    groups2ext_query: dict[int, dict[str, GroupAssemblyIndex]],
+    contig2join: dict[str, list[str]],
+    contig2cov: dict[str, float],
+    contig_pe_links: frozenset[tuple[str, str]],
+):
+    for groupi, group in groups2ext_query.items():
+        if len(group) == 1:
+            continue
+        contigs: set[str] = set(group)
+        contig_links: set[tuple[str, str]] = set()
+        for contig in group:
+            for end in (f"{contig}_L", f"{contig}_R"):
+                last_end = end
+                for next_end in contig2join.get(end, []):
+                    if next_end.endswith("rc"):
+                        next_end = next_end[:-2]
+                    contig_links.add((last_end, next_end))
+                    last_end = end2end2(next_end)
+                    contigs.add(end2contig(next_end))
+        gv_names: list[str] = []
+        gv_covs: list[str] = []
+        gv_links: list[str] = []
+        for contig in contigs:
+            gv_names.append(f'{contig}_L -> {contig}_R [label="{contig}"; color=blue]')
+            gv_covs.append(
+                f'{contig}_R -> {contig}_L [label="{contig2cov[contig]}"; color=blue]'
+            )
+        for pair in contig_links:
+            color = ""
+            if pair not in contig_pe_links:
+                color = "[color=gray]"
+            gv_links.append(f"{pair[0]} -> {pair[1]} {color}")
+        gv_str = (
+            f"digraph group_{groupi} "
+            + "{node[shape=box, style=rounded];"
+            + (";".join(gv_names) + ";")
+            + (";".join(gv_covs) + ";")
+            + (";".join(gv_links) + ";")
+            + "}"
+        )
+        print(gv_str)

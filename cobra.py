@@ -295,6 +295,9 @@ def get_contig2join(
 
     path_circular_end: set[str] = set()
 
+    def has_pe_link(end1: str, end2: str):
+        return (end1, end2) in contig_pe_links
+
     def other_end_is_extendable(end: str):
         """True if the other end is extendable"""
         return (
@@ -400,7 +403,7 @@ def get_contig2join(
         return (
             contig_pair
             and contig_pair.endswith(other_direction)
-            and (contig + other_direction, end) in contig_pe_links
+            and has_pe_link(contig + other_direction, end)
         )
 
     def not_checked(end_list: Iterable[str], checked: list[str]):
@@ -419,7 +422,7 @@ def get_contig2join(
                 end1 = link_pair[end0][0]
                 if end2contig(end1) != contig:
                     checked_reason = check_1path_to_add(end1, contig)
-                    if checked_reason and (end0, end1) in contig_pe_links:
+                    if checked_reason and has_pe_link(end0, end1):
                         # 3. linkage between link_pair1 and end is supported by reads linkage
                         contig2join[end0].append(end1)
                         contig_checked[end0].append(end2contig(end1))
@@ -437,7 +440,7 @@ def get_contig2join(
                 end1, end2 = link_pair[end0]
                 if end2contig(end1) != end2contig(end2):
                     checked_reason, end2add = check_2path_to_add(end1, end2, contig)
-                    if checked_reason:
+                    if checked_reason and has_pe_link(end0, end2add):
                         contig2join[end0].append(end2add)
                         contig_checked[end0].append(end2contig(end1))
                         contig_checked[end0].append(end2contig(end2))
@@ -451,7 +454,7 @@ def get_contig2join(
                     # inherent contig_name(link_pair1) != contig
                     # the same as ablove
                     checked_reason = check_1path_to_add(end1, contig)
-                    if checked_reason and (end, end1) in contig_pe_links:
+                    if checked_reason and has_pe_link(end, end1):
                         contig2join[end0].append(end1)
                         contig_checked[end0].append(end2contig(end1))
                         contig2join_reason[contig][end2contig(end1)] = checked_reason
@@ -485,7 +488,7 @@ def get_contig2join(
                         # If we query the [repeat region], then never mind.
                         #
                         checked_reason, end2add = check_2path_to_add(end1, end2, contig)
-                        if checked_reason:
+                        if checked_reason and has_pe_link(end, end2add):
                             contig2join[end0].append(end2add)
                             contig_checked[end0].append(end2contig(end1))
                             contig_checked[end0].append(end2contig(end2))
@@ -1601,13 +1604,53 @@ def get_assembly2reason2(
             return {
                 this: AssemblyReason(groupi, "standalone", [], group[this].dup_queries)
             }
-    largest = max(group, key=lambda q: len(group[q].special))
-    if all(i.special <= group[largest].special for i in group.values()):
-        return {
-            largest: AssemblyReason(
-                groupi, "longest", [largest], group[largest].dup_queries
+
+
+def log_group2graphviz(
+    groups2ext_query: dict[int, dict[str, GroupAssemblyIndex]],
+    contig2join: dict[str, list[str]],
+    contig2cov: dict[str, float],
+    contig_pe_links: frozenset[tuple[str, str]],
+    file=sys.stdout,
+):
+    for groupi, group in groups2ext_query.items():
+        if len(group) == 1:
+            continue
+        contigs: set[str] = set(group)
+        contig_links: set[tuple[str, str]] = set()
+        for contig in group:
+            for end in (f"{contig}_L", f"{contig}_R"):
+                last_end = end
+                for next_end in contig2join.get(end, []):
+                    if next_end.endswith("rc"):
+                        next_end = next_end[:-2]
+                    contig_links.add((last_end, next_end))
+                    last_end = end2end2(next_end)
+                    contigs.add(end2contig(next_end))
+        gv_names: list[str] = []
+        gv_covs: list[str] = []
+        gv_links: list[str] = []
+        for contig in contigs:
+            gv_names.append(f'{contig}_L -> {contig}_R [label="{contig}"; color=blue]')
+            gv_covs.append(
+                f'{contig}_R -> {contig}_L [label="{contig2cov[contig]}"; color=blue]'
             )
-        }
+        for pair in contig_links:
+            color = ""
+            if not (
+                pair in contig_pe_links or (pair[0], pair[1] + "rc") in contig_pe_links
+            ):
+                color = "[color=gray]"
+            gv_links.append(f"{pair[0]} -> {pair[1]} {color}")
+        gv_str = (
+            f"digraph group_{groupi} "
+            + "{node[shape=box, style=rounded];"
+            + (";".join(gv_names) + ";")
+            + (";".join(gv_covs) + ";")
+            + (";".join(gv_links) + ";")
+            + "}"
+        )
+        print(gv_str, file=file)
 
 
 def cobra(
@@ -1835,6 +1878,14 @@ def cobra(
             )
         )
     )
+    with open(working_dir / f"COBRA_grouping_gv.tsv", "w") as results:
+        log_group2graphviz(
+            contig2join=contig2join,
+            groups2ext_query=groups2ext_query,
+            contig2cov=contig2cov,
+            contig_pe_links=contig_pe_links,
+            file=results,
+        )
     check_assembly_reason = {
         k: v
         for groupi, group in groups2ext_query.items()
@@ -1969,8 +2020,8 @@ def cobra(
                 f"{query in query_set                 =}",
                 f"{contig2assembly.get(query)         =}",
                 f"{check_assembly_reason.get(query)   =}",
-                f"{query in path_circular_potential             =}",
-                f"{query in contig_link_no_pe     =}",
+                f"{query in path_circular_potential   =}",
+                f"{query in contig_link_no_pe         =}",
                 f"{query in failed_joins['nolink']    =}",
                 f"{query in failed_joins['conflict']  =}",
                 f"{query in failed_joins['circular_6']=}",
@@ -2052,24 +2103,21 @@ def cobra(
                 for query in sorted(groups2ext_query[groupi].keys()):
                     for contig in groups2ext_query[groupi][query][1] or {query}:
                         if contig in contig_link_no_pe:
-                            print(
-                                *(failed_reason, groupi, query),
-                                check_assembly_reason.get(query, ("", "redundant"))[1],
-                                contig2len[query],
-                                "",
-                                sep="\t",
-                                file=detail_failed,
-                            )
+                            failed_len = contig2len[query]
+                            failed_path = ""
                         else:
-                            print(
-                                *(failed_reason, groupi, query),
-                                check_assembly_reason.get(query, ("", "redundant"))[1],
-                                len(query2extension[query][0])
-                                - maxk * (query in path_circular_rep),
-                                " ".join(query2path[query]),
-                                sep="\t",
-                                file=detail_failed,
+                            failed_len = len(query2extension[query][0]) - maxk * (
+                                query in path_circular_rep
                             )
+                            failed_path = " ".join(query2path[query])
+                        print(
+                            *(failed_reason, groupi, query),
+                            check_assembly_reason.get(query, ("", "redundant"))[1],
+                            failed_len,
+                            failed_path,
+                            sep="\t",
+                            file=detail_failed,
+                        )
                 reported_failed_groups.add(groupi)
         for groupi, rep_query in sorted(
             (v[0], k)
@@ -2086,24 +2134,21 @@ def cobra(
                 for contig in sorted(groups2ext_query[groupi][query][1] or {query})
             ):
                 if contig in contig_link_no_pe:
-                    print(
-                        *("blast_half", groupi, query),
-                        check_assembly_reason[rep_query][1],
-                        contig2len[query],
-                        "",
-                        sep="\t",
-                        file=detail_failed,
-                    )
+                    failed_len = contig2len[query]
+                    failed_path = ""
                 else:
-                    print(
-                        *("blast_half", groupi, query),
-                        check_assembly_reason[rep_query][1],
-                        len(query2extension[query][0])
-                        - maxk * (query in path_circular_rep),
-                        " ".join(query2path[query]),
-                        sep="\t",
-                        file=detail_failed,
+                    failed_len = len(query2extension[query][0]) - maxk * (
+                        query in path_circular_rep
                     )
+                    failed_path = " ".join(query2path[query])
+                print(
+                    *("blast_half", groupi, query),
+                    check_assembly_reason[rep_query][1],
+                    failed_len,
+                    failed_path,
+                    sep="\t",
+                    file=detail_failed,
+                )
             reported_failed_groups.add(groupi)
         for groupi, rep_query in sorted(
             (v[0], k)
@@ -2123,24 +2168,21 @@ def cobra(
                 }
             ):
                 if contig in contig_link_no_pe:
-                    print(
-                        *("circular_8", groupi, query),
-                        check_assembly_reason[rep_query][1],
-                        contig2len[query],
-                        "",
-                        sep="\t",
-                        file=detail_failed,
-                    )
+                    failed_len = contig2len[query]
+                    failed_path = ""
                 else:
-                    print(
-                        *("circular_8", groupi, query),
-                        check_assembly_reason[rep_query][1],
-                        len(query2extension[query][0])
-                        - maxk * (query in path_circular_rep),
-                        " ".join(query2path[query]),
-                        sep="\t",
-                        file=detail_failed,
+                    failed_len = len(query2extension[query][0]) - maxk * (
+                        query in path_circular_rep
                     )
+                    failed_path = " ".join(query2path[query])
+                print(
+                    *("circular_8", groupi, query),
+                    check_assembly_reason[rep_query][1],
+                    failed_len,
+                    failed_path,
+                    sep="\t",
+                    file=detail_failed,
+                )
 
     if skip_joining:
         _log_info(
@@ -2171,6 +2213,7 @@ def cobra(
             "extended_partial",
             "extended_failed",
             "orphan_end",
+            "no_read_link",
             "self_circular",
         )
     }
@@ -2223,7 +2266,7 @@ def cobra(
                 file=assembled_info,
             )
     # for those due to orphan end
-    with open(working_dir / f"COBRA_category_iii_orphan_end.fa", "w") as orphan_end:
+    with open(working_dir / f"COBRA_category_iii-a_orphan_end.fa", "w") as orphan_end:
         label = "orphan_end"
         for query in sorted(orphan_query):
             query_counts[label] += 1
@@ -2235,7 +2278,25 @@ def cobra(
                 round(GC(contig2seq[end2contig(query)]), 3),
                 "",
                 label,
-                "category_iii",
+                "category_iii-a",
+                sep="\t",
+                file=assembled_info,
+            )
+    with open(
+        working_dir / f"COBRA_category_iii-b_no_read_link.fa", "w"
+    ) as no_read_link:
+        label = "no_read_link"
+        for query in sorted(contig_link_no_pe):
+            query_counts[label] += 1
+            print(f">{query}\n{contig2seq[query]}", file=no_read_link)
+            print(
+                query,
+                contig2len[query],
+                contig2cov[query],
+                round(GC(contig2seq[end2contig(query)]), 3),
+                "",
+                label,
+                "category_iii-b",
                 sep="\t",
                 file=assembled_info,
             )
@@ -2281,6 +2342,7 @@ def cobra(
         extended_fa_names["extended_partial"],
         failed_join,
         orphan_end,
+        no_read_link,
         circular_fasta,
     ):
         summary_fasta(
@@ -2315,6 +2377,7 @@ def cobra(
         f"# Category ii  - extended_partial: {query_counts['extended_partial']} (Unique: {len(checked_strict_rep.keys() - path_circular_potential)})",
         f"# Category ii  - extended_failed (due to COBRA rules): {query_counts['extended_failed']}",
         f"# Category iii - orphan end: {query_counts['orphan_end']}",
+        f"# Category iii - no read link support: {len(contig_link_no_pe)}",
         '# Check "COBRA_joining_status.tsv" for joining status of each query.',
         '# Check "COBRA_joining_summary.tsv" for joining details of "extended_circular" and "extended_partial" queries.',
         sep="\n",
