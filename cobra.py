@@ -758,7 +758,7 @@ def check_Y_paths(
 
 
 def get_cov(coverage_file: Path):
-    contig2cov: dict[str, float] = {}  # the coverage of contigs
+    contig2cov: dict[str, float] = {}
     with open(coverage_file) as coverage:
         # Sometimes will give a file with header, just ignore it once
         for line in coverage:
@@ -1853,7 +1853,7 @@ def cobra(
         if contig in query_set
         and (l := check_self_circular_soft(contig2seq[contig], mink)) > 0
     }
-    orphan_query = orphan_pre_set - self_circular_flex.keys() & query_set
+    orphan_query = (orphan_pre_set - self_circular_flex.keys()) & query_set
     _log_debug(f"# self_circular_flexible_overlap: {len(self_circular_flex)}")
     _log_debug(sorted(self_circular_flex))
 
