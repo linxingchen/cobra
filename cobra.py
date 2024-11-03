@@ -1320,46 +1320,6 @@ def query2groups(contig2assembly: dict[str, set[str]], query_set: frozenset[str]
         }
 
 
-def group_this2feature(
-    this: str,
-    group: dict[str, GroupAssemblyIndex],
-    subset_trunks: set[str] | KeysView[str],
-    subset_unextendable: set[str] | KeysView[str],
-):
-    this_feature: dict[
-        Literal["has_disjoint_found", "is_subset_of", "has_disjoint", "sub_standalong"],
-        list[str],
-    ] = {}
-    ## first, compare this query to previous checked queries
-    for frag in subset_trunks | subset_unextendable:
-        if not group[frag].special & group[this].special:
-            # there is no common sequence between this and frag, so they are disjoint
-            # e.g.
-            #    k141_2: [k141_1, k141_3]         |
-            #    k141_5: [              , k141_4] | + wait to create new item
-            this_feature.setdefault("sub_standalong", []).append(frag)
-            # else we shouhd check their relationship
-        elif frag in subset_unextendable:
-            this_feature.setdefault("has_disjoint_found", []).append(frag)
-        elif group[frag].special < group[this].special:
-            # as sorted, group[frag].special never greater than group[this].special
-            # e.g.
-            #    k141_1: [k141_1]                 |
-            #    k141_2: [k141_1, k141_3]         | *+ update longer
-            this_feature.setdefault("is_subset_of", []).append(frag)
-        else:
-            assert (
-                not group[frag].special >= group[this].special
-            ), "must be uniq and smaller group first"
-            # assert frag in subset_trunks
-            # e.g.
-            #    k141_1: [k141_1]                 | keep
-            #    k141_2: [k141_1, k141_3]         | - discard
-            #    k141_4: [k141_1        , k141_4] | - discard
-            this_feature.setdefault("has_disjoint", []).append(frag)
-    return this_feature
-
-
 class AssemblyReason(NamedTuple):
     groupid: int
     judgement: Literal[
@@ -1373,11 +1333,6 @@ class AssemblyReason(NamedTuple):
     ]
     represent_seqs: list[str]
     dup_queries: frozenset[str]
-
-
-class SubsetChunk(NamedTuple):
-    standalong_subs: dict[str, "SubsetChunk"]
-    frags: list[str]
 
 
 def get_assembly2reason(
