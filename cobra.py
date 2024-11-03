@@ -2192,14 +2192,15 @@ def concat_query_status(
     logfile=sys.stdout,
     debugfile=sys.stderr,
 ):
+    key_cols = ["Status", "StatusReason", "Contig"]
+
     query_df = pd.DataFrame({"Contig": sorted(query_set)})
-    common_cols = ["Contig", "Status", "StatusReason"]
     extend2concat = [
-        extended_self_circular[[*common_cols, "Overlap"]],
+        extended_self_circular[[*key_cols, "Overlap"]],
         extended_status_detail.query("IsQuery == True")
         .query("Status != 'extended_failed'")
         .assign(Overlap=maxk, GroupID=lambda df: df["GroupID"].apply(str))[
-            [*common_cols, "GroupID", "FinalSeqID", "Overlap"]
+            [*key_cols, "GroupID", "FinalSeqID", "Overlap"]
         ],
         extended_failed_detail.assign(
             Status="extended_failed",
@@ -2209,13 +2210,15 @@ def concat_query_status(
                 lambda s: " ".join(s[["StatusReason_x", "StatusReason_y"]].dropna()),
                 axis=1,
             ),
-        )[[*common_cols, "GroupID"]],
-        extended_ignored.query("RepQuery.isna()")[common_cols],
+        )[[*key_cols, "GroupID"]],
+        extended_ignored.query("RepQuery.isna()")[key_cols],
     ]
     query_status = (
         query_df.merge(pd.concat(extend2concat))
         .groupby("Contig")
         .agg(lambda x: " | ".join(sorted({str(i) for i in x.dropna()})))
+        .reset_index()
+        .sort_values(key_cols)
     )
     abnormal_dup_queries = query_status.query("' | ' in StatusReason")
     if abnormal_dup_queries.shape[0]:
