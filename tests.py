@@ -1,5 +1,4 @@
 from cobra import *
-from cobra import _get_subset_trunks
 
 query_set = frozenset({"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"})
 
@@ -24,7 +23,7 @@ def test_get_sub_trunks_one():
         groups2ext_query[0],
         contig2assembly=contig2assembly,
         path_circular_potential=frozenset(),
-        contig_link_no_pe=frozenset(),
+        query_failed_join=frozenset(),
     )
     print(assembly_reason)
     assert len(assembly_reason) == 1
@@ -53,21 +52,13 @@ def test_get_sub_trunks_conflict():
             )
         )
     )
-    subset_trunks, _unextendable, _failed_reason = _get_subset_trunks(
-        0, groups2ext_query[0]
-    )
-    print(f"{subset_trunks=}", f"{_unextendable=}", f"{_failed_reason=}", sep="\n")
-    print()
-    assert subset_trunks == {}
-    assert set(_unextendable) == {"A", "B", "C"}
-    assert set(_failed_reason) == {"A", "B", "C"}
 
     assembly_reason = get_assembly2reason(
         0,
         groups2ext_query[0],
         contig2assembly=contig2assembly,
         path_circular_potential=frozenset(),
-        contig_link_no_pe=frozenset(),
+        query_failed_join=frozenset(),
     )
     print(assembly_reason)
     assert assembly_reason == {
@@ -100,28 +91,12 @@ def test_get_sub_trunks_subs():
     )
     print(groups2ext_query)
 
-    subset_trunks, _unextendable, _failed_reason = _get_subset_trunks(
-        0, groups2ext_query[0]
-    )
-    print(f"{subset_trunks=}", f"{_unextendable=}", f"{_failed_reason=}", sep="\n")
-    assert subset_trunks == {
-        "D": SubsetChunk(
-            standalong_subs={
-                "B": SubsetChunk(standalong_subs={}, frags=["A", "B"]),
-                "C": SubsetChunk(standalong_subs={}, frags=["C"]),
-            },
-            frags=["D"],
-        )
-    }
-    assert not set(_unextendable)
-    assert not set(_failed_reason)
-
     assembly_reason = get_assembly2reason(
         0,
         groups2ext_query[0],
         contig2assembly=contig2assembly,
         path_circular_potential=frozenset("D"),
-        contig_link_no_pe=frozenset(),
+        query_failed_join=frozenset(),
     )
     print(assembly_reason)
     assert assembly_reason == {
@@ -140,11 +115,13 @@ def test_get_sub_trunks_subs():
         group=groups2ext_query[0],
         contig2assembly=contig2assembly,
         path_circular_potential=frozenset(),
-        contig_link_no_pe=frozenset("C"),
+        query_failed_join=frozenset("C"),
     )
     print(assembly_reason)
     # FIXME: this can be a bug: we expect at least A--B can be kept
-    assert assembly_reason["D"].judgement == "nolink_query"
+    (fail_query,) = {"C", "D"} & assembly_reason.keys()
+    assert assembly_reason[fail_query].judgement == "complex_query"
+    assert set(assembly_reason[fail_query].represent_seqs) == {"C", "D"}
     assert assembly_reason["B"].judgement == "longest"
     assert assembly_reason["B"] == AssemblyReason(
         groupid=0, judgement="longest", represent_seqs=["A"], dup_queries=frozenset()
@@ -156,14 +133,15 @@ def test_get_sub_trunks_subs():
         groups2ext_query[0],
         contig2assembly=contig2assembly,
         path_circular_potential=frozenset("B"),
-        contig_link_no_pe=frozenset(),
+        query_failed_join=frozenset(),
     )
-    print(assembly_reason)
+    print('path_circular_potential=frozenset("B")', assembly_reason)
+    (fail_query,) = {"B", "D"} & assembly_reason.keys()
     assert assembly_reason == {
-        "D": AssemblyReason(
+        fail_query: AssemblyReason(
             groupid=0,
             judgement="circular_6_conflict",
-            represent_seqs=assembly_reason["D"].represent_seqs,
+            represent_seqs=assembly_reason[fail_query].represent_seqs,
             dup_queries=frozenset(),
         ),
         "C": AssemblyReason(
@@ -179,7 +157,6 @@ def test_get_sub_trunks_subs():
             dup_queries=frozenset(),
         ),
     }
-    assert set(assembly_reason["D"].represent_seqs) == {"B", "D"}
 
 
 def test_get_sub_trunks_disjoint_i():
@@ -199,34 +176,34 @@ def test_get_sub_trunks_disjoint_i():
             )
         )
     )
-    print(groups2ext_query)
-
-    subset_trunks, _unextendable, _failed_reason = _get_subset_trunks(
-        0, groups2ext_query[0]
+    assembly_reason = get_assembly2reason(
+        0,
+        groups2ext_query[0],
+        contig2assembly=contig2assembly,
+        path_circular_potential=frozenset(),
+        query_failed_join=frozenset(),
     )
-    print(f"{subset_trunks=}", f"{_unextendable=}", f"{_failed_reason=}", sep="\n")
-    assert subset_trunks == {
-        "C": SubsetChunk(standalong_subs={}, frags=["C"]),
-        "A": SubsetChunk(standalong_subs={}, frags=["A"]),
-    }
-    assert _unextendable == {"D", "B"}
-    assert _failed_reason == {
-        "D": AssemblyReason(
+    print(assembly_reason)
+    (failed_query,) = {"B", "D"} & assembly_reason.keys()
+    assert assembly_reason == {
+        failed_query: AssemblyReason(
             groupid=0,
             judgement="conflict_query",
-            represent_seqs=_failed_reason["B"].represent_seqs,
+            represent_seqs=assembly_reason[failed_query].represent_seqs,
             dup_queries=frozenset(),
         ),
-        "B": AssemblyReason(
-            groupid=0,
-            judgement="conflict_query",
-            represent_seqs=_failed_reason["D"].represent_seqs,
-            dup_queries=frozenset(),
+        "C": AssemblyReason(
+            groupid=0, judgement="longest", represent_seqs=[], dup_queries=frozenset()
+        ),
+        "A": AssemblyReason(
+            groupid=0, judgement="longest", represent_seqs=[], dup_queries=frozenset()
         ),
     }
+    assert set(assembly_reason[failed_query].represent_seqs) == {"B", "D"}
 
 
 def test_get_sub_trunks_disjoint_sub():
+    query_set = frozenset({"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"})
     # fmt: off
     contig2assembly = {
         "A": {"A"                    },
@@ -244,38 +221,30 @@ def test_get_sub_trunks_disjoint_sub():
             )
         )
     )
-    print(groups2ext_query)
-
-    subset_trunks, _unextendable, _failed_reason = _get_subset_trunks(
-        0, groups2ext_query[0]
+    assembly_reason = get_assembly2reason(
+        0,
+        groups2ext_query[0],
+        contig2assembly=contig2assembly,
+        path_circular_potential=frozenset(),
+        query_failed_join=frozenset(),
     )
-    print(f"{subset_trunks=}", f"{_unextendable=}", f"{_failed_reason=}", sep="\n")
-    assert subset_trunks == {
-        "A": SubsetChunk(standalong_subs={}, frags=["A"]),
-        "C": SubsetChunk(standalong_subs={}, frags=["C"]),
-    }
-    assert len(_unextendable) == 3
-    assert _unextendable < {"B", "C", "D", "E"}
-    assert _failed_reason == {
-        "E": AssemblyReason(
+    print(assembly_reason)
+    (failed_query,) = {"D", "E"} & assembly_reason.keys()
+    assert assembly_reason == {
+        failed_query: AssemblyReason(
             groupid=0,
             judgement="conflict_query",
-            represent_seqs=_failed_reason["E"].represent_seqs,
+            represent_seqs=assembly_reason[failed_query].represent_seqs,
             dup_queries=frozenset(),
         ),
-        "D": AssemblyReason(
-            groupid=0,
-            judgement="conflict_query",
-            represent_seqs=_failed_reason["D"].represent_seqs,
-            dup_queries=frozenset(),
+        "C": AssemblyReason(
+            groupid=0, judgement="longest", represent_seqs=[], dup_queries=frozenset()
         ),
-        "B": AssemblyReason(
-            groupid=0,
-            judgement="conflict_query",
-            represent_seqs=["B"],
-            dup_queries=frozenset(),
+        "A": AssemblyReason(
+            groupid=0, judgement="longest", represent_seqs=[], dup_queries=frozenset()
         ),
     }
+    assert set(assembly_reason[failed_query].represent_seqs) == {"E", "D", "B"}
 
 
 def test_get_sub_trunks_8():
@@ -296,22 +265,12 @@ def test_get_sub_trunks_8():
     )
     print(groups2ext_query)
 
-    subset_trunks, _unextendable, _failed_reason = _get_subset_trunks(
-        0, groups2ext_query[0]
-    )
-    print(f"{subset_trunks=}", f"{_unextendable=}", f"{_failed_reason=}", sep="\n")
-    assert subset_trunks == {
-        "C": SubsetChunk(standalong_subs={}, frags=["A", "B", "C"])
-    }
-    assert not set(_unextendable)
-    assert not set(_failed_reason)
-
     assembly_reason = get_assembly2reason(
         0,
         groups2ext_query[0],
         contig2assembly=contig2assembly,
         path_circular_potential=frozenset({"B", "C"}),
-        contig_link_no_pe=frozenset(),
+        query_failed_join=frozenset(),
     )
     print(assembly_reason)
     assert assembly_reason == {
@@ -350,20 +309,12 @@ def test_get_sub_trunks_sub_only():
     )
     print(groups2ext_query)
 
-    subset_trunks, _unextendable, _failed_reason = _get_subset_trunks(
-        0, groups2ext_query[0]
-    )
-    print(f"{subset_trunks=}", f"{_unextendable=}", f"{_failed_reason=}", sep="\n")
-    assert subset_trunks == {"C": SubsetChunk(standalong_subs={}, frags=["C"])}
-    assert set(_unextendable) == {"A", "B", "D"}
-    assert set(_failed_reason) == {"A", "B", "D"}
-
     assembly_reason = get_assembly2reason(
         0,
         groups2ext_query[0],
         contig2assembly=contig2assembly,
         path_circular_potential=frozenset("D"),
-        contig_link_no_pe=frozenset(),
+        query_failed_join=frozenset(),
     )
     print(assembly_reason)
     assert assembly_reason == {
@@ -412,23 +363,12 @@ def test_get_sub_trunks_real():
     )
     print(groups2ext_query)
 
-    subset_trunks, _unextendable, _failed_reason = _get_subset_trunks(
-        0, groups2ext_query[0]
-    )
-    print(f"{subset_trunks=}", f"{_unextendable=}", f"{_failed_reason=}", sep="\n")
-    assert len(subset_trunks) == 1
-    (subset,) = subset_trunks.values()
-    assert subset.standalong_subs == {}
-    assert {"AcMG_3793", "AcMG_755"} < set(subset.frags) and len(subset.frags) == 3
-    assert _unextendable == set()
-    assert _failed_reason == {}
-
     assembly_reason = get_assembly2reason(
         0,
         groups2ext_query[0],
         contig2assembly=contig2assembly,
         path_circular_potential=frozenset({"AcMG_755"}),
-        contig_link_no_pe=frozenset({"AcMG_9528"}),
+        query_failed_join=frozenset({"AcMG_9528"}),
     )
     print(assembly_reason)
     (rep_conflit_seq,) = {
