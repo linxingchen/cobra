@@ -6,15 +6,14 @@
 # Modification date: Sep 3, 2023
 
 
-import argparse
 import concurrent.futures
 import itertools
 import os
+import sys
 from collections import defaultdict
 from pathlib import Path
-import sys
 from time import strftime
-from typing import Callable, Iterable, KeysView, Literal, NamedTuple, TextIO, TypeVar
+from typing import Callable, Iterable, Literal, NamedTuple, TextIO, TypeVar
 
 import pandas as pd
 import pysam
@@ -42,6 +41,8 @@ except ImportError:
 
 
 def parse_args(args=None):
+    import argparse
+
     parser = argparse.ArgumentParser(
         description="This script is used to get higher quality (including circular) virus genomes "
         "by joining assembled contigs based on their end overlaps."
@@ -54,6 +55,14 @@ def parse_args(args=None):
         help="the query contigs file (fasta format), or the query name "
         "list (text file, one column).",
         required=True,
+    )
+    requiredNamed.add_argument(
+        "-i",
+        "--ignore",
+        type=str,
+        help="the should-not-be-extended contigs file or the contig name "
+        "list (for example, to skip prophage contigs).",
+        default="",
     )
     requiredNamed.add_argument(
         "-f",
@@ -285,13 +294,12 @@ def check_self_circular_soft(sequence: Seq, min_over_len: int):
 
 def get_contig2join(
     query_set: frozenset[str],
-    orphan_query: frozenset[str],
     contig_pe_links: frozenset[tuple[str, str]],
     contig2cov: dict[str, float],
     link_pair: dict[str, list[str]],
     one_path_end: frozenset[str],
     two_paths_end: frozenset[str],
-    self_circular: frozenset[str],
+    fail_join_set: frozenset[str],
 ):
     contig2join: dict[str, list[str]] = {}
     contig_checked: dict[str, list[str]] = {}
@@ -308,12 +316,6 @@ def get_contig2join(
     def has_pe_link(end1: str, end2: str):
         return (end1, end2) in contig_pe_links
 
-    def other_end_is_extendable(end: str):
-        """True if the other end is extendable"""
-        return (
-            end2contig(end) not in self_circular and len(link_pair[end2end2(end)]) > 0
-        )
-
     def check_2path_to_add(end1: str, end2: str, contig: str):
         if link2_1contig(end1, end2):
             #             >contig2<
@@ -325,8 +327,9 @@ def get_contig2join(
             #             >contig3<
             # no more contigs starts with `|----->` or ends with `|=====>`
             #
+            # the paths with higher abundance
             checked_reason = "are_equal_paths"
-            link_pair_do = the_dominant_one(end1, end2)
+            link_pair_do = max(end1, end2, key=lambda x: contig2cov[end2contig(x)])
         elif (
             contig2cov[end2contig(end1)] + contig2cov[end2contig(end2)]
             >= contig2cov[contig] * 0.5
@@ -334,10 +337,13 @@ def get_contig2join(
             # 0.5 is ok, too big will get much fewer "Extended circular" ones.
             # choise the one with more similar abundance
             checked_reason = "the_better_one"
-            link_pair_do = the_better_one((end1, end2), contig)
+            link_pair_do = min(
+                (end1, end2),
+                key=lambda x: abs(contig2cov[contig] - contig2cov[end2contig(x)]),
+            )
         else:
             return "", ""
-        if end2contig(link_pair_do) in self_circular:
+        if end2contig(link_pair_do) in fail_join_set:
             return "", ""
         return checked_reason, link_pair_do
 
@@ -346,14 +352,14 @@ def get_contig2join(
         if the other end of a potential joining contig cannot be extended,
         add only when it has a very similar coverage to that of the query contig
         """
-        # 2.1. link_pair1 can be extend in the next step
-        if other_end_is_extendable(end):
-            return "other_end_is_extendable"
-        # however, it CANNOT be extend in the next step
         # 1. link_pair1 is not point to a self-circulated contig
-        if end2contig(end) in self_circular:
+        if end2contig(end) in fail_join_set:
             return ""
-            # 2.2. link_pair1 has similar coverage with contig
+        # 2.1. link_pair1 can be extend in the next step
+        if len(link_pair[end2end2(end)]) > 0:
+            return "other_end_is_extendable"
+            # however, it CANNOT be extend in the next step
+        # 2.2. link_pair1 has similar coverage with contig
         if (
             contig2cov[contig]  # don't div zero
             and 0.9 <= contig2cov[end2contig(end)] / contig2cov[contig] <= 1.11
@@ -377,16 +383,6 @@ def get_contig2join(
             len(end1_2pairs) == 1
             and len(end2_2pairs) == 1
             and end2contig(end1_2pairs[0]) == end2contig(end2_2pairs[0])
-        )
-
-    def the_dominant_one(path1: str, path2: str):
-        """the paths with higher abundance"""
-        return max(path1, path2, key=lambda x: contig2cov[end2contig(x)])
-
-    def the_better_one(paths: Iterable[str], contig: str):
-        """the path with more similar coverage"""
-        return min(
-            paths, key=lambda x: abs(contig2cov[contig] - contig2cov[end2contig(x)])
         )
 
     def could_circulate(
@@ -517,10 +513,7 @@ def get_contig2join(
                 # In the following walks, paths will never be duplicated.
         return len_before_walk < len(contig2join[end0])
 
-    for contig in tqdm(
-        query_set - (orphan_query | self_circular),
-        desc="Detecting joins of contigs. ",
-    ):
+    for contig in tqdm(query_set - fail_join_set, desc="Detecting joins of contigs. "):
         # extend each contig from both directions
         while join_walker(contig, "L"):
             pass
@@ -1494,6 +1487,7 @@ def log_group2graphviz(
 
 def cobra(
     query_fa: Path,
+    ignore_fa: str,
     assem_fa: Path,
     mapping_links: MappingLinks,
     coverage_file: Path,
@@ -1569,8 +1563,17 @@ def cobra(
     # distinguish orphan_end_query and non_orphan_end_query:
     _log_info(
         f"A total of {len(query_set)} query contigs were imported, "
-        f"with {len(orphan_pre_set & query_set)} query with unique end (orphan).",
+        f"with {len(orphan_pre_set & query_set)} query with unique end (orphan)."
     )
+    if ignore_fa:
+        ignore_set = get_query_set(Path(ignore_fa), uniset=contig2seq)
+        query_ignored = query_set & ignore_set
+        _log_info(
+            f"As user reqested, ignore {len(ignore_set)} contigs including {len(query_ignored)} queries."
+        )
+        query_set -= query_ignored
+    else:
+        ignore_set = frozenset()
     _log_info_2 = get_log_info(
         8, "2.2. Analyzing assemblied paths and solving conflicts", logfile
     )
@@ -1606,13 +1609,13 @@ def cobra(
     _log_info_2("Detecting joins of contigs. ")
     contig2join, contig2join_reason, path_circular_end = get_contig2join(
         query_set=query_set,
-        orphan_query=orphan_query,
         contig_pe_links=contig_pe_links,
         contig2cov=contig2cov,
         link_pair=link_pair,
         one_path_end=one_path_end,
         two_paths_end=two_paths_end,
-        self_circular=self_circular,
+        fail_join_set=(self_circular | self_circular_flex.keys())
+        | (orphan_query | ignore_set),
     )
     path_circular_potential = frozenset(end2contig(i) for i in path_circular_end)
     _log_debug("# path_circular")
@@ -1857,6 +1860,7 @@ def cobra(
                         extended_status_queries["extended_circular"],
                     ),
                     ("path_circular_rep", path_circular_rep),
+                    ("ignore_set", ignore_set),
                 ],
             )
             for pi, (i, li) in enumerate(ll)
@@ -1868,12 +1872,15 @@ def cobra(
     # make blastn database and run search if the database is not empty
     summary_join_tsv = working_dir / f"COBRA_joining_summary.tsv"
     summary_fail_tsv = working_dir / f"COBRA_joining_failed_paths.tsv"
+    new_fa = working_dir / f"{assem_fa.stem}.new{assem_fa.suffix}"
     if not (checked_strict_rep or self_circular or self_circular_flex):
         # Of course we assume that sequence is not empty!
         _log_info(
             "no query was extended by COBRA, exit! "
             "this is normal if you only provide few queries."
         )
+        if not skip_new_assembly:
+            os.system(f"cp {assem_fa} {new_fa}")
         # region ugly touch output
         with (
             open(summary_join_tsv, "w"),
@@ -2091,7 +2098,7 @@ def cobra(
             for query in checked_strict_rep
             for contig in contig2assembly[query]
         }
-        with open(working_dir / f"{assem_fa.name}.new.fa", "w") as new:
+        with open(new_fa, "w") as new:
             for header in sorted(contig2seq.keys() - query_extension_used.keys()):
                 print(f">{header}\n{contig2seq[header]}", file=new)
         os.system(
@@ -2208,6 +2215,7 @@ def main(args=None):
     # get the name of the whole contigs fasta file
     # folder of output
     query_fa = Path(args.query)
+    ignore_fa = args.ignore
     working_dir = Path(args.output) if args.output else Path(f"{query_fa.name}_COBRA")
     # check cache
     mapping_links = MappingLinks(args.mapping, args.mapping_link_cache)
@@ -2231,6 +2239,7 @@ def main(args=None):
     ):
         cobra(
             query_fa=query_fa,
+            ignore_fa=ignore_fa,
             assem_fa=Path(args.fasta),
             mapping_links=mapping_links,
             coverage_file=Path(args.coverage),
