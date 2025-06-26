@@ -19,13 +19,14 @@ import pandas as pd
 import pysam
 from Bio import SeqIO
 from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
 
 T = TypeVar("T")
 try:
     from tqdm import tqdm as _tqdm
 
-    def tqdm(__object: Iterable[T], *nargs, **kwargs) -> Iterable[T]:
-        kwargs["disable"] = None
+    def tqdm(__object: Iterable[T], *nargs, **kwargs) -> Iterable[T]:  # type: ignore[reportRedeclaration]
+        kwargs["disable"] = None  # disable tqdm if not in terminal
         return _tqdm(__object, *nargs, **kwargs)
 
 except ImportError:
@@ -47,8 +48,8 @@ def parse_args(args=None):
         description="This script is used to get higher quality (including circular) virus genomes "
         "by joining assembled contigs based on their end overlaps."
     )
-    requiredNamed = parser.add_argument_group("required named arguments")
-    requiredNamed.add_argument(
+    required_args = parser.add_argument_group("required named arguments")
+    required_args.add_argument(
         "-q",
         "--query",
         type=str,
@@ -56,7 +57,7 @@ def parse_args(args=None):
         "list (text file, one column).",
         required=True,
     )
-    requiredNamed.add_argument(
+    parser.add_argument(
         "-i",
         "--ignore",
         type=str,
@@ -64,14 +65,14 @@ def parse_args(args=None):
         "list (for example, to skip prophage contigs).",
         default="",
     )
-    requiredNamed.add_argument(
+    required_args.add_argument(
         "-f",
         "--fasta",
         type=str,
         help="the whole set of assembled contigs (fasta format).",
         required=True,
     )
-    requiredNamed.add_argument(
+    required_args.add_argument(
         "-a",
         "--assembler",
         type=str,
@@ -79,34 +80,34 @@ def parse_args(args=None):
         help="de novo assembler used, COBRA not tested for others.",
         required=True,
     )
-    requiredNamed.add_argument(
+    required_args.add_argument(
         "-mink",
         "--mink",
         type=int,
         help="the min kmer size used in de novo assembly.",
         required=True,
     )
-    requiredNamed.add_argument(
+    required_args.add_argument(
         "-maxk",
         "--maxk",
         type=int,
         help="the max kmer size used in de novo assembly.",
         required=True,
     )
-    requiredNamed.add_argument(
+    required_args.add_argument(
         "-m",
         "--mapping",
         type=str,
         help="the reads mapping file in sam or bam format.",
         required=True,
     )
-    requiredNamed.add_argument(
+    parser.add_argument(
         "--mapping-link-cache",
         type=str,
         nargs="*",
         help=" cache reads mapping to gzip info to speed up secondary run.",
     )
-    requiredNamed.add_argument(
+    required_args.add_argument(
         "-c",
         "--coverage",
         type=str,
@@ -118,9 +119,7 @@ def parse_args(args=None):
         "--linkage_mismatch",
         type=int,
         default=2,
-        help="the max read mapping mismatches for "
-        "determining if two contigs are spanned by "
-        "paired reads. [2]",
+        help="the max read mapping mismatches for determining if two contigs are spanned by paired reads. [2]",
     )
     parser.add_argument(
         "-tr",
@@ -148,7 +147,7 @@ def parse_args(args=None):
         default=16,
         help="the number of threads for blastn. [16]",
     )
-    parser.add_argument("-v", "--version", action="version", version="cobra v1.2.3")
+    parser.add_argument("-v", "--version", action="version", version="cobra v1.3.0")
     return parser.parse_args(args)
 
 
@@ -185,7 +184,7 @@ def group_yield(data: Iterable[T], n):
         yield l
 
 
-def compre_sets(p: int, li: set, lj: set):
+def compare_sets(p: int, li: set, lj: set):
     if p < 0:
         return ""
     if p == 0:
@@ -335,7 +334,7 @@ def get_contig2join(
             >= contig2cov[contig] * 0.5
         ):
             # 0.5 is ok, too big will get much fewer "Extended circular" ones.
-            # choise the one with more similar abundance
+            # choose the one with more similar abundance
             checked_reason = "the_better_one"
             link_pair_do = min(
                 (end1, end2),
@@ -528,7 +527,7 @@ def get_contig2assembly(contig2join: dict[str, list[str]], path_circular_end: se
         if len(contig2join[item]) == 0:
             continue
         contig = end2contig(item)
-        # detect extented query contigs
+        # detect extended query contigs
         if contig not in contig2assembly:
             contig2assembly[contig] = {contig}
         if (
@@ -608,7 +607,7 @@ def summary_fasta(
     with open(f"{fasta_file}.summary.tsv", "w") as so:
         print(*summary_file_headers, sep="\t", file=so)
 
-        record: SeqIO.SeqRecord
+        record: SeqRecord
         for record in SeqIO.parse(f"{fasta_file}", "fasta"):
             header = str(record.id).strip()
             seq: Seq = record.seq
@@ -640,7 +639,7 @@ def get_link_pair(contig2seq: dict[str, Seq], maxk: int):
     d_Rrc: dict[Seq, set[str]] = defaultdict(set)
     #
     for header, seq in tqdm(
-        contig2seq.items(), desc=f"Buiding graph based on {maxk}-mer end"
+        contig2seq.items(), desc=f"Building graph based on {maxk}-mer end"
     ):
         # >contig
         # >>>>>>>...>>>>>>>
@@ -819,9 +818,9 @@ class MappingLinks:
             self.link_cache.parent.mkdir(parents=True, exist_ok=True)
 
     def path(self):
-        if self.cached():
-            return self.link_cache
-        return self.mapping
+        mapping_file = self.link_cache if self.cached() else self.mapping
+        assert mapping_file is not None, "No mapping or link cache file provided."
+        return mapping_file
 
     def write_cache(self, contig_pe_links, orphan2pe_span):
         import gzip
@@ -1287,7 +1286,7 @@ def query2groups(contig2assembly: dict[str, set[str]], query_set: frozenset[str]
         for query in pan_queries:
             query2groups_[query] = pan_queries
     # ucontig2assembly: dict[str, frozenset[str]] = (
-    ucontig2assembly: dict[str, dict[Literal["index", "assembly"], frozenset[str]]] = (
+    ucontig2assembly: dict[str, dict[Literal["index", "assembly"], frozenset[str]]] = (  # type: ignore[reportAssignmentType]
         uassembly2contg.sort_index()
         .drop_duplicates()
         .reset_index()
@@ -1313,17 +1312,20 @@ def query2groups(contig2assembly: dict[str, set[str]], query_set: frozenset[str]
         }
 
 
+AVAIL_JUDGEMENTS = Literal[
+    "standalone",
+    "conflict_query",
+    "circular_in_sub",
+    "circular_6_conflict",
+    "circular_8_tight",
+    "complex_query",
+    "longest",
+]
+
+
 class AssemblyReason(NamedTuple):
     groupid: int
-    judgement: Literal[
-        "standalone",
-        "conflict_query",
-        "circular_in_sub",
-        "circular_6_conflict",
-        "circular_8_tight",
-        "complex_query",
-        "longest",
-    ]
+    judgement: AVAIL_JUDGEMENTS
     represent_seqs: list[str]
     dup_queries: frozenset[str]
 
@@ -1374,7 +1376,7 @@ def get_assembly2reason(
         group, key=lambda q: (len(group[q].special), len(group[q].dup_queries))
     )
 
-    def clean_failed(*_failed_wait: str, reason="conflict_query"):
+    def clean_failed(*_failed_wait: str, reason: AVAIL_JUDGEMENTS = "conflict_query"):
         nonlocal subsets
         failed_wait = set(_failed_wait)
         _this = _failed_wait[0]
@@ -1569,7 +1571,7 @@ def cobra(
         ignore_set = get_query_set(Path(ignore_fa), uniset=contig2seq)
         query_ignored = query_set & ignore_set
         _log_info(
-            f"As user reqested, ignore {len(ignore_set)} contigs including {len(query_ignored)} queries."
+            f"User ignored {len(ignore_set)} contigs including {len(query_ignored)} queries."
         )
         query_set -= query_ignored
     else:
@@ -1623,12 +1625,12 @@ def cobra(
 
     # save the potential joining paths
     _log_info_2("Saving potential joining paths.")
-    with open(working_dir / f"COBRA_potential_joining_paths.tsv", "w") as results:
+    with open(working_dir / f"COBRA_potential_joining_paths.tsv", "w") as f_group_gv:
         for item in sorted(contig2join):
             if end2contig(item) in self_circular:
-                print(item, [end2end2(item)], sep="\t", file=results)
+                print(item, [end2end2(item)], sep="\t", file=f_group_gv)
             elif contig2join[item]:
-                print(item, contig2join[item], sep="\t", file=results)
+                print(item, contig2join[item], sep="\t", file=f_group_gv)
 
     # get the joining paths
     _log_info_2("Getting the joining paths of contigs.")
@@ -1709,13 +1711,13 @@ def cobra(
         | {i for j in group.values() for i in j.special}
         | {i for j in group.values() for i in j.dup_queries}
     }
-    with open(working_dir / f"COBRA_grouping_gv.tsv", "w") as results:
+    with open(working_dir / f"COBRA_grouping_gv.tsv", "w") as f_group_gv:
         log_group2graphviz(
             contig2join=contig2join,
             groups2ext_query=groups2ext_query,
             contig2cov=contig2cov,
             contig_pe_links=contig_pe_links,
-            file=results,
+            file=f_group_gv,
         )
     check_assembly_reason = {
         k: v
@@ -1729,15 +1731,15 @@ def cobra(
         ).items()
     }
     # for debug
-    with open(working_dir / f"COBRA_check_assembly_reason.tsv", "w") as results:
-        print("group", "reason", "query", "dups", sep="\t", file=results)
+    with open(working_dir / f"COBRA_check_assembly_reason.tsv", "w") as f_group_gv:
+        print("group", "reason", "query", "dups", sep="\t", file=f_group_gv)
         for item in sorted(
             check_assembly_reason.items(), key=lambda x: (x[1][0], x[0])
         ):
-            print(*item[1][:2], item[0], *item[1][2:], sep="\t", file=results)
+            print(*item[1][:2], item[0], *item[1][2:], sep="\t", file=f_group_gv)
 
     # region check assembly groups
-    _log_info_2("Filtering paths accoring to COBRA rules.")
+    _log_info_2("Filtering paths according to COBRA rules.")
     failed_joins: dict[Literal["conflict", "circular_6", "complex"], dict[str, int]] = {
         l: {  # type: ignore [misc]
             j: v[0]
@@ -1834,33 +1836,29 @@ def cobra(
     _log_info(
         *(
             "\t".join(
-                [*(compre_sets(pi - pj, li, lj) for pj, (j, lj) in enumerate(ll)), i]
+                [*(compare_sets(pi - pj, li, lj) for pj, (j, lj) in enumerate(ll)), i]
             )
             for ll in (
                 [
-                    ("query_set", query_set),
-                    ("orphan_end_query", orphan_query),
-                    ("complex_end_query", query_failed_join),
-                    ("self_circular [overlap_maxk]", self_circular),
-                    ("self_circular [overlap_flex]", self_circular_flex.keys()),
-                    ("assembly_rep", assembly_rep.keys()),
-                    ("failed_join_queries", extended_status_queries["extended_failed"]),
-                    ("failed_join [complex]", failed_joins["complex"].keys()),
-                    ("failed_join [conflict]", failed_joins["conflict"].keys()),
-                    ("failed_join [circular_6]", failed_joins["circular_6"].keys()),
-                    ("failed_blast_half", failed_blast_half),
-                    ("redundant_circular_8", redundant_circular_8.keys()),
-                    ("checked_rep", checked_strict_rep.keys()),
-                    (
-                        "checked_partial_queries",
-                        extended_status_queries["extended_partial"],
-                    ),
-                    (
-                        "checked_circular_queries",
-                        extended_status_queries["extended_circular"],
-                    ),
-                    ("path_circular_rep", path_circular_rep),
-                    ("ignore_set", ignore_set),
+                    # fmt: off
+                    ("query_set"                   , query_set                                   ),
+                    ("orphan_end_query"            , orphan_query                                ),
+                    ("complex_end_query"           , query_failed_join                           ),
+                    ("self_circular [overlap_maxk]", self_circular                               ),
+                    ("self_circular [overlap_flex]", self_circular_flex.keys()                   ),
+                    ("assembly_rep"                , assembly_rep.keys()                         ),
+                    ("failed_join_queries"         , extended_status_queries["extended_failed"]  ),
+                    ("failed_join [complex]"       , failed_joins["complex"].keys()              ),
+                    ("failed_join [conflict]"      , failed_joins["conflict"].keys()             ),
+                    ("failed_join [circular_6]"    , failed_joins["circular_6"].keys()           ),
+                    ("failed_blast_half"           , failed_blast_half                           ),
+                    ("redundant_circular_8"        , redundant_circular_8.keys()                 ),
+                    ("checked_rep"                 , checked_strict_rep.keys()                   ),
+                    ("checked_partial_queries"     , extended_status_queries["extended_partial"] ),
+                    ("checked_circular_queries"    , extended_status_queries["extended_circular"]),
+                    ("path_circular_rep"           , path_circular_rep                           ),
+                    ("ignore_set"                  , ignore_set                                  ),
+                    # fmt: on
                 ],
             )
             for pi, (i, li) in enumerate(ll)
@@ -1935,7 +1933,6 @@ def cobra(
     extended_status_detail.query("Status != 'extended_failed'").to_csv(
         summary_join_tsv, sep="\t", index=False
     )
-    # extended_status_detail.query("Status != 'extended_failed'").query("IsQuery == True").groupby("Contig")["RepQuery"].count().max()
 
     _log_info_3("Getting the joining details of failed query contigs.")
     extended_failed_detail = (
@@ -2002,7 +1999,9 @@ def cobra(
         logfile=logfile,
         debugfile=debugfile,
     )
-    query_status.to_csv(working_dir / f"COBRA_query_status.tsv", sep="\t", index=False)
+    query_status.to_csv(
+        working_dir / f"COBRA_joining_status.tsv", sep="\t", index=False
+    )
 
     # save the joining status information of each query
     _log_info_3("Saving identified and modified contigs.")
@@ -2019,7 +2018,7 @@ def cobra(
                     query2extension[s["RepQuery"]].to_fasta(s["FinalSeqID"]),
                     file=extended_fasta,
                     flush=True,
-                ),
+                ),  # type: ignore[reportCallIssue]
                 axis=1,
             )
         extended_fa_names[label] = extended_fasta
@@ -2031,8 +2030,8 @@ def cobra(
     )
     if not skip_new_assembly:
 
-        def contig2fasta(conig, *labels):
-            return ">{} {}\n{}".format(conig, " ".join(labels), contig2seq[conig])
+        def contig2fasta(contig, *labels):
+            return ">{} {}\n{}".format(contig, " ".join(labels), contig2seq[contig])
 
         # for self circular
         with open(
@@ -2049,7 +2048,7 @@ def cobra(
                         ),
                     ),
                     file=circular_fasta,
-                ),
+                ),  # type: ignore[reportCallIssue]
                 axis=1,
             )
         # for those cannot be extended
@@ -2058,20 +2057,22 @@ def cobra(
         ) as failed_join:
             label = "extended_failed"
             extended_failed_detail.drop_duplicates(subset=["Contig"]).apply(
-                lambda s: print(contig2fasta(s["Contig"], label), file=failed_join),
+                lambda s: print(
+                    contig2fasta(s["Contig"], label), file=failed_join
+                ),  # type: ignore[reportCallIssue]
                 axis=1,
             )
         # for those due to orphan end or complex end
-        for ab, label in (("a", "orphan_end"), ("b", "complex_end_rest")):
+        for ab, label in (("a", "orphan_end"), ("b", "complex_end_remain")):
             with open(
                 working_dir / f"COBRA_category_iii-{ab}_{label}.fa", "w"
             ) as extended_fasta:
                 extended_ignored.query("RepQuery.isna()").query(
-                    "StatusReason == '{}'".format(label.replace("_rest", ""))
+                    "StatusReason == '{}'".format(label.replace("_remain", ""))
                 ).drop_duplicates().apply(
                     lambda s: print(
                         contig2fasta(s["Contig"], label), file=extended_fasta
-                    ),
+                    ),  # type: ignore[reportCallIssue]
                     axis=1,
                 )
             extended_fa_names[label] = extended_fasta
@@ -2082,7 +2083,7 @@ def cobra(
             extended_fa_names["extended_partial"],
             failed_join,
             extended_fa_names["orphan_end"],
-            extended_fa_names["complex_end_rest"],
+            extended_fa_names["complex_end_remain"],
         ):
             summary_fasta(
                 outio.name,
@@ -2109,36 +2110,18 @@ def cobra(
     _log_info(
         "\n",
         "3. RESULTS SUMMARY",
+        # fmt: off
         "# Total queries: {}".format(len(query_set)),
-        "# Category i   - self_circular: {}".format(
-            sum(query_status["Status"] == "self_circular")
-        ),
-        "# Category ii  - extended_circular: {} (Unique: {})".format(
-            sum(query_status["Status"] == "extended_circular"),
-            len(
-                query_status.query("Status == 'extended_circular'")[
-                    "FinalSeqID"
-                ].unique()
-            ),
-        ),
-        "# Category ii  - extended_partial: {} (Unique: {})".format(
-            sum(query_status["Status"] == "extended_partial"),
-            len(
-                query_status.query("Status == 'extended_partial'")[
-                    "FinalSeqID"
-                ].unique()
-            ),
-        ),
-        "# Category ii  - extended_failed (due to COBRA rules): {}".format(
-            sum(query_status["Status"] == "extended_failed")
-        ),
-        "# Category iii - orphan end: {}".format(
-            sum(query_status["StatusReason"] == "orphan_end")
-        ),
-        "# Category iii - too complex to: {}".format(
-            sum(query_status["StatusReason"] == "complex_end")
-        ),
-        '# Check "COBRA_query_status.tsv" for joining status of each query.',
+        "# Category i   - self_circular: {}"                       .format(sum(query_status      ["Status"] == "self_circular")),
+        "# Category ii  - extended_circular: {} (Unique: {})"      .format(sum(query_status      ["Status"] == "extended_circular"),
+                                                                           len(query_status.query("Status   == 'extended_circular'")["FinalSeqID"].unique())),
+        "# Category ii  - extended_partial: {} (Unique: {})"       .format(sum(query_status      ["Status"] == "extended_partial" ),
+                                                                           len(query_status.query("Status   == 'extended_partial'" )["FinalSeqID"].unique())),
+        "# Category ii  - extended_failed (due to COBRA rules): {}".format(sum(query_status      ["Status"] == "extended_failed")),
+        "# Category iii - orphan end: {}"                          .format(sum(query_status["StatusReason"] == "orphan_end")),
+        "# Category iii - too complex to resolve: {}"              .format(sum(query_status["StatusReason"] == "complex_end")),
+        # fmt: on
+        '# Check "COBRA_joining_status.tsv" for joining status of each query.',
         '# Check "COBRA_joining_summary.tsv" for joining details of "extended_circular" and "extended_partial" queries.',
         sep="\n",
     )

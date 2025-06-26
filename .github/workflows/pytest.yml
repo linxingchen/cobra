@@ -7,6 +7,18 @@ defaults:
     shell: bash -el {0}
 
 jobs:
+  codespell:
+    name: Check for spelling errors
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Codespell
+        uses: codespell-project/actions-codespell@v2
+        with:
+          ignore_words_list: Crate,crate,fo,tre
+
   formatting:
     permissions:
       contents: read # for actions/checkout to fetch code
@@ -27,8 +39,6 @@ jobs:
   testing:
     runs-on: ubuntu-latest
     needs: formatting
-    strategy:
-      max-parallel: 5
 
     steps:
       - uses: actions/checkout@v4
