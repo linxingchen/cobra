@@ -19,7 +19,7 @@ COBRA (Contig Overlap Based Re-Assembly) is a bioinformatics tool to get higher 
 
 3. v1.3.0 (released on 2025-06-26)
     - refactor+feature: format code and add trim_readno
-    - fix handle of "6" shape path
+    - fix the handle of "6" shape path
 
 
 ## Citation
@@ -29,19 +29,19 @@ The paper is out at Nature Microbiology (https://www.nature.com/articles/s41564-
 
 ## Introduction
 
-**1. Why metagenomic contigs are fragmented?**
+**1. Why are metagenomic contigs fragmented?**
 
 The genomes assembled from short paired-end reads based metagenomes are usually fragmented due to (1) intra-genome repeats, (2) inter-genome shared region, and (3) within-population variations, as the widely utilized assemblers based on de Bruijn graphs, e.g., metaSPAdes, IDBA_UD and MEGAHIT, tend to have a breaking point when multiple paths are available instead of making risky extension (see example in **Figure 1**).
 
 ![image](https://user-images.githubusercontent.com/46725273/111676563-8a21f180-87db-11eb-9b8c-4c63fb993936.png)
 
-Figure 1. Example of how assemblers break in assembly when within-population occurs.
+Figure 1. An example of how assemblers break in assembly when within-population occurs.
 
 **2. Contigs may be joined with expected end overlap.**
 
-According to the principles of the abovementioned assemblers, the broken contigs have an end overlap with determined length, that is the max-kmer (maxK hereafter) used in de nono assembly for metaSPAdes and MEGAHIT, and the maxK-1 for IDBA_UD, which we termed as "expected overlap length" (Figures 1 and 2).
+According to the principles of the abovementioned assemblers, the broken contigs have an end overlap with a determined length, that is, the max-kmer (maxK hereafter) used in de nono assembly for metaSPAdes and MEGAHIT, and the maxK-1 for IDBA_UD, which we termed as "expected overlap length" (Figures 1 and 2).
 
-* Note: as COBRA will use the information provided by paired-end reads, thus only those samples sequenced by paired-end technology should work.
+* Note: as COBRA will use the information provided by paired-end reads, only those samples sequenced by paired-end technology should work.
 
 ![image](https://user-images.githubusercontent.com/46725273/111677281-4c719880-87dc-11eb-85a9-a62906f4e10b.png)
 
@@ -52,9 +52,9 @@ Figure 2. The "expected overlap length" has been documented in manual genome cur
 
 COBRA determines the "expected overlap length" (both the forward direction and reverse complement direction) for all the contigs from an assembly, then looks for the valid joining path for each query that users provide (should be a fraction of the whole assembly) based on a list of features including contig coverage, contig overlap relationships, and contig continuity (based on paired-end reads mapping) (Figure 3).
 
-Note that scaffolds (for example, metaSPAdes assembly) could be used as input for COBRA extension, however, we suggest not using scaffolds from IDBA_UD as the potential errors in the scaffolding step (see [Chen et al. 2020](https://genome.cshlp.org/content/30/3/315.short) for details). Thus, for IDBA_UD and MEGAHIT assembly, the contigs should be used.
+Note that scaffolds (for example, metaSPAdes assembly) could be used as input for COBRA extension; however, we suggest not using scaffolds from IDBA_UD as the potential errors in the scaffolding step (see [Chen et al. 2020](https://genome.cshlp.org/content/30/3/315.short) for details). Thus, for IDBA_UD and MEGAHIT assembly, the contigs should be used.
 
-Given that COBRA has only tested for contigs/scaffolds from IDBA_UD, metaSPAdes and MEGAHIT, it will be risky to use it on contigs/scaffolds from any other assemblers.
+Given that COBRA has only tested for contigs/scaffolds from IDBA_UD, metaSPAdes, and MEGAHIT, it will be risky to use it on contigs/scaffolds from any other assemblers.
 
 ![Figure 1](https://github.com/linxingchen/cobra/assets/46725273/77a8285b-cce8-45f3-8e4e-4c46c3f45354)
 
@@ -62,7 +62,7 @@ Figure 3. The workflow of COBRA.
 
 
 ## Dependencies
-* COBRA is a Python script (tested for version 3.7 or higher) that uses a list of frequently used Python packages including:
+* COBRA is a Python script (tested for version 3.7 or higher) that uses a list of frequently used Python packages, including:
 ```
 Bio
 Bio.Seq
@@ -76,7 +76,7 @@ time
 * The only third-party software that COBRA will use is [BLASTn](https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download).
 
 ## Installation
-COBRA could now be installed via different ways.
+COBRA could now be installed in different ways.
 
 * (1) git
 
@@ -95,7 +95,7 @@ To confirm the installment,
 
 ```cobra-meta -h```
 
-which shows your something like this
+Which shows something like this
 
 ```
 usage: cobra-meta [-h] -q QUERY -f FASTA -a {idba,megahit,metaspades} -mink MINK -maxk MAXK -m MAPPING -c COVERAGE [-lm LINKAGE_MISMATCH] [-o OUTPUT] [-t THREADS] [-v]
@@ -115,7 +115,7 @@ To confirm the installment,
 
 ```cobra-meta -h```
 
-which shows your something like this
+Which shows something like this
 
 ```
 usage: cobra.py [-h] -q QUERY [-i IGNORE] -f FASTA -a {idba,megahit,metaspades} -mink MINK -maxk MAXK -m MAPPING
@@ -140,9 +140,9 @@ usage: cobra.py [-h] -q QUERY [-i IGNORE] -f FASTA -a {idba,megahit,metaspades} 
 ## Input files
 (1) COBRA needs four files as inputs, i.e.,
 
-* ```-f/--fasta```: A fasta format file containing all the contigs from a single assembly, note that IDBA_UD and MEGAHIT usually save contigs with a minimum length of 200 bp.
+* ```-f/--fasta```: A fasta format file containing all the contigs from a single assembly. Note that IDBA_UD and MEGAHIT usually save contigs with a minimum length of 200 bp.
 
-* ```-c/--coverage```: a two columns (separated by tab) file of the sequencing coverage of all contigs in the ```-f/--fasta``` file, example below:
+* ```-c/--coverage```: a two-column (separated by tab) file of the sequencing coverage of all contigs in the ```-f/--fasta``` file, example below:
 
 ```
 contig-140_0    25.552
@@ -153,7 +153,7 @@ contig-140_4    41.2746
 ...
 ```
 
-* ```-q/--query```: the query contigs that the user wants COBRA to extend, could be provided in a fasta format file, or a one-column text file with the names of the query contigs. Please make sure the names are exactly the same format as in the ```-f/--fasta``` file, otherwise, COBRA may have problems extending them.
+* ```-q/--query```: the query contigs that the user wants COBRA to extend, could be provided in a fasta format file, or a one-column text file with the names of the query contigs. Please make sure the names are exactly the same format as in the ```-f/--fasta``` file; otherwise, COBRA may have problems extending them.
 
 * ```-m/--mapping```: the paired-end reads mapping file of all contigs in the ```-f/--fasta``` file, could be sam or bam file.
 
@@ -164,14 +164,14 @@ contig-140_4    41.2746
 
 
 (3) Optional flags
-* ```-lm/--linkage_mismatch```: the number of read mapping mismatches allowed when determining if two contigs were spanned by paired reads.
+* ```-lm/--linkage_mismatch```: the number of read mapping mismatches allowed when determining if paired reads spanned two contigs.
 * ```-o/--output```: the name of the output folder, otherwise it will be "{```-q/--query```}.COBRA" if not provided.
 * ```-t/--threads```: the number of threads used for BLASTn search.
 
 
 ## How to obtain the mapping file
 
-The mapping file could be obtained with tools like Bowtie2 and BBMap, please refer to the manual descriptions for details of the tools. Below is the general way to get the sorted sam/bam file, you thus need to be available to samtools (which could be get here - https://github.com/samtools/samtools).
+The mapping file could be obtained with tools like Bowtie2 and BBMap. Please refer to the manual descriptions for details of the tools. Below is the general way to get the sorted sam/bam file; you thus need to be available to samtools (which could be downloaded here - https://github.com/samtools/samtools).
 
 For example,
 
@@ -276,10 +276,10 @@ For all the queries, COBRA assigns them to different categories based on their j
 
 * "self_circular" - the query contig itself is a circular genome.
 * "extended_circular" - the query contig was joined and extended into a circular genome.
-* "extended_partial" - the query contig was joined and extended but not to circular.
+* "extended_partial" - the query contig was joined and extended, but not circular.
 * "extended_failed" - the query contig was not able to be extended due to COBRA rules.
 * "orphan_end" - neither end of a given contig shares "expected overlap length" with others.
-* "complex_end" - the query contig has multiple possible joining paths so COBRA could not resolve them.
+* "complex_end" - the query contig has multiple possible joining paths, so COBRA could not resolve them.
 
 For the joined and extended queries in each category, only the unique ones (```*.fa```) will be saved for users' following analyses, and the sequence information (e.g., length, coverage, GC, num of Ns) is summarized in the ```*fa.summary.tsv``` files. For categories of "extended_circular", and "extended_partial", the joining details of each query are included in the corresponding folder and summarized in the ```COBRA_joining_summary.tsv``` file, an example shown below:
 
@@ -317,7 +317,7 @@ circular	AcMG_14922	extended_circular	AcMG_18416_R AcMG_14922	AcMG_14922	AcMG_14
 [2/5] [2024/11/03 11:53:18] Getting linkage based on sam/bam. Be patient, this may take long.
 [3/5] [2024/11/03 11:55:27] Reading contig coverage information.
 [4/5] [2024/11/03 11:55:30] Getting query contig list. A total of 3315 query contigs were imported, with 1495 query with unique end (orphan).
-2.2. Analyzing assemblied paths and solving conflicts
+2.2. Analyzing assembled paths and solving conflicts
 [0/8] [2024/11/03 11:55:30] Detecting self_circular contigs, independent of mapping linkage.
 [1/8] [2024/11/03 11:55:31] Detecting joins of contigs.
 [2/8] [2024/11/03 11:55:32] Saving potential joining paths.
